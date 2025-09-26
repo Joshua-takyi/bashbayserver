@@ -1,0 +1,28 @@
+package helpers
+
+type EnhancedClaims struct {
+	*CustomClaims
+	Role     string `json:"role"`
+	UserID   string `json:"id"`
+	Username string `json:"username,omitempty"`
+}
+
+// Helper methods for role checking
+func (ec *EnhancedClaims) IsAdmin() bool {
+	return ec.Role == "admin"
+}
+
+func (ec *EnhancedClaims) HasRole(role string) bool {
+	return ec.Role == role
+}
+
+func (ec *EnhancedClaims) IsOwner(userID string) bool {
+	return ec.UserID == userID
+}
+
+func (ec *EnhancedClaims) GetSafeRole() string {
+	if ec.Role == "" {
+		return "guest"
+	}
+	return ec.Role
+}
