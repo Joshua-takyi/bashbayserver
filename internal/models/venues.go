@@ -1,28 +1,136 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-type Venues struct {
-	Id          uuid.UUID `db:"id" json:"id"`
-	HostId      uuid.UUID `db:"host_id" json:"host_id"`
-	Name        string    `db:"name" json:"name"`
-	Description string    `db:"description" json:"description"` // e.g., "A beautiful venue for events"
-	Location    string    `db:"location" json:"location"`       // e.g., "123 Main St, City, Country"
-	Coordinates struct {
-		Latitude  float64 `json:"latitude"`
-		Longitude float64 `json:"longitude"`
-	} `db:"coordinates" json:"coordinates"` // e.g., {"latitude": 40.7128, "longitude": -74.0060}
+type VenueStatus string
 
-	Capacity     int                    `db:"capacity" json:"capacity"`             // e.g., 100
-	Amenities    map[string]interface{} `db:"amenities" json:"amenities"`           // e.g., {"wifi": true, "parking": false}
-	PricePerHour float64                `db:"price_per_hour" json:"price_per_hour"` // e.g., 50.00
-	Availability map[string]interface{} `db:"availability" json:"availability"`     // e.g., {"monday": "9am-5pm", ...}
-	// status for admin to approve or reject venue
-	Status    string    `db:"status" json:"status"` // e.g., "pending"
-	CreatedAt time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+const (
+	StatusPending  VenueStatus = "pending"
+	StatusActive   VenueStatus = "active"
+	StatusInactive VenueStatus = "inactive"
+)
+
+// Coordinates maps to PostGIS geography(Point,4326)
+type Coordinates struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
+}
+
+// Scan allows Coordinates to be read from Postgres
+func (c *Coordinates) Scan(src interface{}) error {
+	var dataStr string
+
+	// Handle different input types
+	switch v := src.(type) {
+	case []byte:
+		dataStr = string(v)
+	case string:
+		dataStr = v
+	case nil:
+		return fmt.Errorf("coordinates cannot be nil")
+	default:
+		return fmt.Errorf("cannot scan %T into Coordinates", src)
+	}
+
+	// First try WKT formats (for backward compatibility)
+	var lon, lat float64
+	var err error
+
+	// Try different WKT formats
+	_, err = fmt.Sscanf(dataStr, "POINT(%f %f)", &lon, &lat)
+	if err == nil {
+		c.Latitude = lat
+		c.Longitude = lon
+		return nil
+	}
+
+	_, err = fmt.Sscanf(dataStr, "SRID=4326;POINT(%f %f)", &lon, &lat)
+	if err == nil {
+		c.Latitude = lat
+		c.Longitude = lon
+		return nil
+	}
+
+	// If WKT parsing failed, try EWKB (hex-encoded binary)
+	if len(dataStr) >= 32 { // EWKB for point should be at least 32 hex chars
+		// Decode hex string to bytes
+		ewkbBytes, err := hex.DecodeString(dataStr)
+		if err != nil {
+			return fmt.Errorf("failed to decode EWKB hex: %v", err)
+		}
+
+		// Parse EWKB binary format
+		return c.parseEWKB(ewkbBytes)
+	}
+
+	return fmt.Errorf("failed to parse coordinates from format: %s (input: %q)", err.Error(), dataStr)
+}
+
+// parseEWKB parses Extended Well-Known Binary format for PostGIS Point
+func (c *Coordinates) parseEWKB(data []byte) error {
+	if len(data) < 21 {
+		return fmt.Errorf("EWKB data too short: %d bytes", len(data))
+	}
+
+	// EWKB format for Point with SRID:
+	// Byte 0: Endianness (1 = little endian)
+	// Bytes 1-4: Type with SRID flag (0x20000001 = Point with SRID)
+	// Bytes 5-8: SRID (4326)
+	// Bytes 9-16: X coordinate (longitude)
+	// Bytes 17-24: Y coordinate (latitude)
+
+	endian := data[0]
+	var order binary.ByteOrder
+	if endian == 1 {
+		order = binary.LittleEndian
+	} else {
+		order = binary.BigEndian
+	}
+
+	// Read type (should be 0x20000001 for Point with SRID)
+	typ := order.Uint32(data[1:5])
+	if typ&0x20000000 == 0 {
+		return fmt.Errorf("EWKB type does not have SRID flag: %x", typ)
+	}
+
+	// Read SRID
+	srid := order.Uint32(data[5:9])
+	if srid != 4326 {
+		return fmt.Errorf("unexpected SRID: %d (expected 4326)", srid)
+	}
+
+	// Read coordinates
+	c.Longitude = math.Float64frombits(order.Uint64(data[9:17]))
+	c.Latitude = math.Float64frombits(order.Uint64(data[17:25]))
+
+	return nil
+} // Value allows Coordinates to be written into Postgres
+func (c Coordinates) Value() (driver.Value, error) {
+	return fmt.Sprintf("SRID=4326;POINT(%f %f)", c.Longitude, c.Latitude), nil
+}
+
+type Venue struct {
+	Id           uuid.UUID              `db:"id" json:"id"`
+	HostId       uuid.UUID              `db:"host_id" json:"host_id"`
+	Images       []string               `db:"images" json:"images"`
+	Name         string                 `db:"name" json:"name"`
+	Description  string                 `db:"description" json:"description"`
+	Location     string                 `db:"location" json:"location"`
+	Coordinates  Coordinates            `db:"coordinates" json:"coordinates"`
+	Capacity     int                    `db:"capacity" json:"capacity"`
+	Amenities    map[string]interface{} `db:"amenities" json:"amenities"`
+	PricePerHour float64                `db:"price_per_hour" json:"price_per_hour"`
+	Availability map[string]interface{} `db:"availability" json:"availability"`
+	Status       VenueStatus            `db:"status" json:"status"`
+	CreatedAt    time.Time              `db:"created_at" json:"created_at"`
+	UpdatedAt    time.Time              `db:"updated_at" json:"updated_at"`
 }

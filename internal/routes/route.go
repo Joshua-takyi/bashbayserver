@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joshua-takyi/ww/internal/container"
 	"github.com/joshua-takyi/ww/internal/handlers"
@@ -14,12 +15,19 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 
 	r := gin.New()
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Request-ID"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
 
 	// Add middleware
 	r.Use(middleware.RequestID())
 	r.Use(middleware.StructuredLogger(container.Logger))
 	r.Use(middleware.ErrorHandler(container.Logger))
-	r.Use(middleware.CORS())
+	// r.Use(middleware.CORS())
 	r.Use(gin.Recovery())
 
 	// API version 1
@@ -81,11 +89,11 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 	//     eventRoutes.GET("/", handlers.ListEvents(container.EventService))
 	// }
 	//
-	// venueRoutes := v1.Group("/venues")
-	// {
-	//     venueRoutes.POST("/", handlers.CreateVenue(container.VenueService))
-	//     venueRoutes.GET("/", handlers.ListVenues(container.VenueService))
-	// }
+	venueRoutes := protected.Group("/venues")
+	{
+		venueRoutes.POST("/", handlers.CreateVenueHandler(container.VenueService))
+		venueRoutes.GET("/", handlers.ListVenues(container.VenueService))
+	}
 	//
 	// reviewRoutes := v1.Group("/reviews")
 	// {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/supabase-community/supabase-go"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -15,6 +16,7 @@ import (
 var (
 	SupabaseClient *supabase.Client
 	MongoDBClient  *mongo.Client
+	Cld            *cloudinary.Cloudinary
 )
 
 // supabase init
@@ -71,4 +73,22 @@ func MongoDBDisconnect() error {
 	}
 	MongoDBClient = nil
 	return nil
+}
+
+func CloudinaryCredentials() (*cloudinary.Cloudinary, error) {
+	cloudinaryName := os.Getenv("CLOUDINARY_CLOUD_NAME")
+	apiSecret := os.Getenv("CLOUDINARY_API_SECRET")
+	apiKey := os.Getenv("CLOUDINARY_API_KEY")
+	cld, err := cloudinary.NewFromParams(
+		cloudinaryName,
+		apiKey,
+		apiSecret,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Cloudinary: %v", err)
+	}
+
+	fmt.Println("✅ Cloudinary connected successfully")
+	return cld, nil
 }

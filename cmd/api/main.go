@@ -18,9 +18,7 @@ import (
 
 func main() {
 	// Load environment variables
-	if err := godotenv.Load(".env.local"); err != nil {
-		slog.Warn("No .env.local file found, using system environment variables")
-	}
+	_ = godotenv.Load(".env.local")
 
 	// Load configuration
 	cfg, err := config.LoadConfig()
@@ -28,6 +26,12 @@ func main() {
 		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
+	cld, err := connect.CloudinaryCredentials()
+	if err != nil {
+		slog.Error("Failed to connect to Cloudinary", "error", err)
+		os.Exit(1)
+	}
+	connect.Cld = cld
 
 	// Setup logger
 	logger := setupLogger(cfg)
@@ -49,7 +53,7 @@ func main() {
 	logger.Info("Connected to MongoDB successfully")
 
 	// Initialize dependency container
-	appContainer := container.NewContainer(logger, supaClient, mongoClient, supaUrl, supaKey)
+	appContainer := container.NewContainer(logger, cld, supaClient, mongoClient, supaUrl, supaKey)
 
 	// Setup routes
 	router := routes.SetupRoutes(appContainer)

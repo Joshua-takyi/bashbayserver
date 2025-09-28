@@ -36,7 +36,7 @@ func AuthenticateUser(u *services.UserService) gin.HandlerFunc {
 			Password string `json:"password" binding:"required"`
 		}
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			c.JSON(400, gin.H{"error": err.Error(), "message": "invalid request payload"})
 			return
 		}
 
@@ -53,7 +53,7 @@ func AuthenticateUser(u *services.UserService) gin.HandlerFunc {
 			c.SetCookie(
 				"access_token",
 				tokenRes.AccessToken,
-				tokenRes.ExpiresIn,
+				tokenRes.ExpiresIn*24*7,
 				"/",
 				"", // let Gin pick current domain
 				isProduction,
