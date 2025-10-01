@@ -77,9 +77,8 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 		})
 
 		userRoutes.GET("/:id", handlers.GetUser(container.UserService))
-
-		// userRoutes.PUT("/:id", handlers.UpdateUser(container.UserService))
-		// userRoutes.DELETE("/:id", handlers.DeleteUser(container.UserService))
+		userRoutes.PATCH("/:id", handlers.UpdateUser(container.UserService))
+		userRoutes.DELETE("/:id", handlers.DeleteUser(container.UserService))
 	}
 
 	// Future routes for other services
@@ -93,6 +92,10 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 	{
 		venueRoutes.POST("/", handlers.CreateVenueHandler(container.VenueService))
 		venueRoutes.GET("/", handlers.ListVenues(container.VenueService))
+		venueRoutes.GET("/:id", handlers.ListVenueByID(container.VenueService))
+		venueRoutes.DELETE("/:id", handlers.DeleteVenue(container.VenueService))
+		venueRoutes.GET("/host-venues/:host_id", handlers.ListVenuesByHost(container.VenueService))
+
 	}
 	//
 	// reviewRoutes := v1.Group("/reviews")

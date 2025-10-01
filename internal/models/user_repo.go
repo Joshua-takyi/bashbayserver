@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/supabase-community/gotrue-go/types"
@@ -23,8 +22,23 @@ type UserRepo interface {
 	AuthenticateUser(ctx context.Context, email, password string) (interface{}, error)
 	RefreshToken(ctx context.Context, refreshToken string) (interface{}, error)
 	GetUser(ctx context.Context, id uuid.UUID, accessToken string) (*User, error)
-	UpdateUser(ctx context.Context, user *User) error
-	DeleteUser(ctx context.Context, id uuid.UUID) error
+	UpdateUser(ctx context.Context, user map[string]interface{}, userid uuid.UUID, accessToken string) (*User, error)
+	DeleteUser(ctx context.Context, id uuid.UUID, accessToken string) error
+	UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error)
+}
+
+func ConvertToUser(raw map[string]interface{}) (*User, error) {
+	userBytes, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal raw user: %v", err)
+	}
+
+	user := &User{}
+	if err := json.Unmarshal(userBytes, user); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal to user struct: %v", err)
+	}
+
+	return user, nil
 }
 
 func (su *SupabaseRepo) CreateUser(ctx context.Context, user *User) (interface{}, error) {
@@ -94,70 +108,106 @@ func (su *SupabaseRepo) GetUser(ctx context.Context, id uuid.UUID, accessToken s
 		return nil, fmt.Errorf("failed to get user by ID: %v", err)
 	}
 
-	// define a small struct matching the DB row we selected
-	type userRow struct {
-		ID          string            `json:"id"`
-		Email       string            `json:"email"`
-		Username    string            `json:"username"`
-		FullName    string            `json:"fullname"`
-		Role        string            `json:"role"`
-		Location    string            `json:"location"`
-		Bio         string            `json:"bio"`
-		Preferences map[string]string `json:"preferences"`
-		PhoneNumber string            `json:"phone_number"`
-		IsVerified  bool              `json:"is_verified"`
-		AvatarURL   string            `json:"avatar_url"`
-		CreatedAt   time.Time         `json:"created_at"`
-		UpdatedAt   time.Time         `json:"updated_at"`
-	}
-
 	// Supabase returns an array even for single results
-	var rows []userRow
-	if err := json.Unmarshal(raw, &rows); err != nil {
+	var users []User
+	if err := json.Unmarshal(raw, &users); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal user rows: %v", err)
 	}
 
-	if len(rows) == 0 {
+	if len(users) == 0 {
 		return nil, fmt.Errorf("user not found")
 	}
 
-	if len(rows) > 1 {
+	if len(users) > 1 {
 		return nil, fmt.Errorf("multiple users found for ID %s", stringedId)
 	}
 
-	row := rows[0]
-	uid, err := uuid.Parse(row.ID)
+	return &users[0], nil
+}
+
+func (su *SupabaseRepo) UpdateUser(ctx context.Context, user map[string]interface{}, userid uuid.UUID, accessToken string) (*User, error) {
+
+	if userid == uuid.Nil {
+		return nil, fmt.Errorf("invalid UUID")
+	}
+
+	if len(user) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+
+	client := su.supabaseClient
+
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create authenticated client: %v", err)
+		}
+		client = authClient
+	}
+
+	raw, count, err := client.From(ProfileTable).
+		Update(user, "", "exact").
+		Eq("id", userid.String()).
+		Execute()
 	if err != nil {
-		return nil, fmt.Errorf("invalid user id from db: %v", err)
+		return nil, fmt.Errorf("failed to update user: %v", err)
 	}
 
-	user := &User{
-		ID:          uid,
-		Username:    row.Username,
-		FullName:    row.FullName,
-		Email:       row.Email,
-		IsVerified:  row.IsVerified,
-		Bio:         row.Bio,
-		Role:        row.Role,
-		Location:    row.Location,
-		Preferences: row.Preferences,
-		PhoneNumber: row.PhoneNumber,
-		AvatarURL:   row.AvatarURL,
-		CreatedAt:   row.CreatedAt,
-		UpdatedAt:   row.UpdatedAt,
+	if count == 0 {
+		return nil, fmt.Errorf("no user found to update %v", err)
 	}
 
-	return user, nil
+	var rawUsers []map[string]interface{}
+	if err := json.Unmarshal(raw, &rawUsers); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal updated user: %v", err)
+	}
+
+	if len(rawUsers) == 0 {
+		return nil, fmt.Errorf("no user data returned after update")
+	}
+
+	updatedUser, err := ConvertToUser(rawUsers[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert updated user data: %v", err)
+	}
+
+	return updatedUser, nil
 }
 
-func (su *SupabaseRepo) UpdateUser(ctx context.Context, user *User) error {
-	// TODO: Implement UpdateUser for Supabase
-	return fmt.Errorf("UpdateUser not implemented yet")
-}
+func (su *SupabaseRepo) DeleteUser(ctx context.Context, id uuid.UUID, accessToken string) error {
+	if id == uuid.Nil {
+		return fmt.Errorf("no valid UUID provided")
+	}
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticated client: %v", err)
+		}
+		client = authClient
+	}
 
-func (su *SupabaseRepo) DeleteUser(ctx context.Context, id uuid.UUID) error {
-	// TODO: Implement DeleteUser for Supabase
-	return fmt.Errorf("DeleteUser not implemented yet")
+	raw, count, err := client.From(ProfileTable).Delete("", "exact").Eq("id", id.String()).Execute()
+
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %v", err)
+	}
+
+	if count == 0 {
+		return fmt.Errorf("no user found to delete")
+	}
+
+	var rawUsers []map[string]interface{}
+	if err := json.Unmarshal(raw, &rawUsers); err != nil {
+		return fmt.Errorf("failed to unmarshal deleted user data: %v", err)
+	}
+
+	if len(rawUsers) == 0 {
+		return fmt.Errorf("no user data returned after deletion")
+	}
+
+	// Optionally, convert and return the deleted user data if needed
+	return nil
 }
 
 func (su *SupabaseRepo) AuthenticateUser(ctx context.Context, email, password string) (interface{}, error) {
@@ -174,4 +224,42 @@ func (su *SupabaseRepo) RefreshToken(ctx context.Context, refreshToken string) (
 		return nil, fmt.Errorf("failed to refresh token: %v", err)
 	}
 	return resp, nil
+}
+
+func (su *SupabaseRepo) UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error) {
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err != nil {
+			return "", fmt.Errorf("failed to create authenticated client: %v", err)
+		}
+		client = authClient
+	}
+
+	raw, count, err := client.From(ProfileTable).Update(map[string]interface{}{
+		"avatar_url": imageData,
+	}, "", "exact").Eq("id", userId.String()).Execute()
+	if err != nil {
+		return "", fmt.Errorf("failed to upload avatar: %v", err)
+	}
+
+	if count == 0 {
+		return "", fmt.Errorf("no user found to update avatar")
+	}
+
+	var rawUsers []map[string]interface{}
+	if err := json.Unmarshal(raw, &rawUsers); err != nil {
+		return "", fmt.Errorf("failed to unmarshal updated user data: %v", err)
+	}
+
+	if len(rawUsers) == 0 {
+		return "", fmt.Errorf("no user data returned after avatar upload")
+	}
+
+	updatedUser, err := ConvertToUser(rawUsers[0])
+	if err != nil {
+		return "", fmt.Errorf("failed to convert updated user data: %v", err)
+	}
+
+	return updatedUser.AvatarURL, nil
 }

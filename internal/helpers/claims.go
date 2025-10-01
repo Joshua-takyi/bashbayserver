@@ -12,6 +12,10 @@ func (ec *EnhancedClaims) IsAdmin() bool {
 	return ec.Role == "admin"
 }
 
+func (ec *EnhancedClaims) IsHost() bool {
+	return ec.Role == "host"
+}
+
 func (ec *EnhancedClaims) HasRole(role string) bool {
 	return ec.Role == role
 }

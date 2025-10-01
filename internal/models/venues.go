@@ -119,18 +119,23 @@ func (c Coordinates) Value() (driver.Value, error) {
 }
 
 type Venue struct {
-	Id           uuid.UUID              `db:"id" json:"id"`
-	HostId       uuid.UUID              `db:"host_id" json:"host_id"`
-	Images       []string               `db:"images" json:"images"`
-	Name         string                 `db:"name" json:"name"`
-	Description  string                 `db:"description" json:"description"`
-	Location     string                 `db:"location" json:"location"`
-	Coordinates  Coordinates            `db:"coordinates" json:"coordinates"`
-	Capacity     int                    `db:"capacity" json:"capacity"`
-	Amenities    map[string]interface{} `db:"amenities" json:"amenities"`
-	PricePerHour float64                `db:"price_per_hour" json:"price_per_hour"`
-	Availability map[string]interface{} `db:"availability" json:"availability"`
-	Status       VenueStatus            `db:"status" json:"status"`
-	CreatedAt    time.Time              `db:"created_at" json:"created_at"`
-	UpdatedAt    time.Time              `db:"updated_at" json:"updated_at"`
+	Id                      uuid.UUID              `db:"id" json:"id,omitempty"`
+	HostId                  uuid.UUID              `db:"host_id" json:"host_id,omitempty"`
+	Images                  []string               `db:"images" json:"images,omitempty"`
+	Name                    string                 `db:"name" json:"name,omitempty"`
+	VenueType               string                 `db:"venue_type" json:"venue_type,omitempty"`
+	Rules                   []string               `db:"rules" json:"rules,omitempty"`
+	Accessibility           []string               `db:"accessibility" json:"accessibility,omitempty"`
+	MinBookingDurationHours int64                  `db:"min_booking_duration_hours" json:"min_booking_duration_hours,omitempty"`
+	CancellationPolicy      string                 `db:"cancellation_policy" json:"cancellation_policy,omitempty"`
+	Description             string                 `db:"description" json:"description,omitempty"`
+	Location                string                 `db:"location" json:"location,omitempty"`
+	Coordinates             Coordinates            `db:"coordinates" json:"coordinates,omitempty"`
+	Capacity                int                    `db:"capacity" json:"capacity,omitempty"`
+	Amenities               map[string]interface{} `db:"amenities" json:"amenities,omitempty"`
+	PricePerHour            float64                `db:"price_per_hour" json:"price_per_hour,omitempty"`
+	Availability            map[string]interface{} `db:"availability" json:"availability,omitempty"`
+	Status                  VenueStatus            `db:"status" json:"status,omitempty"`
+	CreatedAt               time.Time              `db:"created_at" json:"created_at,omitempty"`
+	UpdatedAt               time.Time              `db:"updated_at" json:"updated_at,omitempty"`
 }

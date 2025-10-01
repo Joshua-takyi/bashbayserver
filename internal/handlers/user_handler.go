@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -142,5 +144,111 @@ func GetUser(u *services.UserService) gin.HandlerFunc {
 		}
 
 		c.JSON(200, user)
+	}
+}
+
+func UpdateUser(u *services.UserService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		paramId := c.Param("id")
+		paramId = strings.TrimSpace(paramId)
+		paramId = strings.Trim(paramId, " ")
+		if paramId == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "user ID is required",
+			})
+			return
+		}
+
+		var user map[string]interface{}
+		if err := c.ShouldBindJSON(&user); err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		claims, exists := c.Get("user")
+		if !exists {
+			c.JSON(401, gin.H{"error": "Unauthorized"})
+			return
+		}
+		userClaims, ok := claims.(*helpers.EnhancedClaims)
+		if !ok {
+			c.JSON(500, gin.H{"error": "Invalid user claims"})
+			return
+		}
+		userId, err := uuid.Parse(userClaims.UserID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+
+		parsedParamId, err := uuid.Parse(paramId)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		accessToken, err := c.Cookie("access_token")
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Access token not found"})
+			return
+		}
+
+		if userId != parsedParamId && !userClaims.IsAdmin() {
+			c.JSON(403, gin.H{"error": "Access denied"})
+			return
+		}
+
+		data, err := u.UpdateUser(c.Request.Context(), user, parsedParamId, accessToken)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, data)
+	}
+}
+
+func DeleteUser(u *services.UserService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		paramId := strings.TrimSpace(c.Param("id"))
+		if paramId == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "user ID is required",
+			})
+			return
+		}
+
+		claims, exists := c.Get("user")
+		if !exists {
+			c.JSON(401, gin.H{"error": "Unauthorized"})
+			return
+		}
+		userClaims, ok := claims.(*helpers.EnhancedClaims)
+		if !ok {
+			c.JSON(500, gin.H{"error": "Invalid user claims"})
+			return
+		}
+
+		parsedParamId, err := uuid.Parse(paramId)
+		if err != nil {
+			c.JSON(400, gin.H{"error": err.Error()})
+			return
+		}
+
+		accessToken, err := c.Cookie("access_token")
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Access token not found"})
+			return
+		}
+		if !userClaims.IsAdmin() {
+			c.JSON(403, gin.H{"error": "Access denied: only admins can delete users"})
+			return
+		}
+
+		err = u.DeleteUser(c.Request.Context(), parsedParamId, accessToken)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"message": "user deleted successfully"})
 	}
 }

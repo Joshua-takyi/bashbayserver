@@ -9,52 +9,91 @@ import (
 )
 
 type VenuesRepo interface {
-	CreateVenue(ctx context.Context, venue *Venue, hostId uuid.UUID) (*Venue, error)
-	GetVenueByID(ctx context.Context, id uuid.UUID) (*Venue, error)
-	ListVenues(ctx context.Context, offset, limit int) ([]*Venue, error)
+	CreateVenue(ctx context.Context, venue *Venue, hostId uuid.UUID, accessToken string) (*Venue, error)
+	ListVenueByID(ctx context.Context, id uuid.UUID) (*Venue, error)
+	ListVenuesByHost(ctx context.Context, hostId uuid.UUID, offset, limit int, accessToken string) ([]*Venue, int, error)
+	ListVenues(ctx context.Context, offset, limit int) ([]*Venue, int, error)
+	UpdateVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, venue map[string]interface{}, accessToken string) (*Venue, error)
+	DeleteVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, accessToken string) error
 }
 
-func (su *SupabaseRepo) CreateVenue(ctx context.Context, venue *Venue, hostId uuid.UUID) (*Venue, error) {
-	// Create an intermediate struct for unmarshaling from Supabase
-	type VenueResponse struct {
-		Id           uuid.UUID              `json:"id"`
-		HostId       uuid.UUID              `json:"host_id"`
-		Name         string                 `json:"name"`
-		Images       []string               `json:"images"`
-		Description  string                 `json:"description"`
-		Location     string                 `json:"location"`
-		Coordinates  string                 `json:"coordinates"` // This comes back as a string from PostGIS
-		Capacity     int                    `json:"capacity"`
-		Amenities    map[string]interface{} `json:"amenities"`
-		PricePerHour float64                `json:"price_per_hour"`
-		Availability map[string]interface{} `json:"availability"`
-		Status       VenueStatus            `json:"status"`
-		CreatedAt    string                 `json:"created_at"` // Supabase returns timestamps as strings
-		UpdatedAt    string                 `json:"updated_at"`
+func convertRawToVenue(rawVenue map[string]interface{}) (*Venue, error) {
+	// Extract and handle coordinates separately
+	var coordStr string
+	if coords, exists := rawVenue["coordinates"]; exists {
+		if str, ok := coords.(string); ok {
+			coordStr = str
+		}
+		delete(rawVenue, "coordinates") // Remove coordinates for clean unmarshaling
 	}
 
-	var createdResponse []VenueResponse
+	// Convert raw data to venue struct
+	venueBytes, err := json.Marshal(rawVenue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal raw venue: %v", err)
+	}
 
-	// Convert coordinates to PostGIS format manually for Supabase REST API
-	venueData := map[string]interface{}{
-		"id":             venue.Id,
-		"host_id":        venue.HostId,
-		"name":           venue.Name,
-		"images":         venue.Images,
-		"description":    venue.Description,
-		"location":       venue.Location,
-		"coordinates":    fmt.Sprintf("SRID=4326;POINT(%f %f)", venue.Coordinates.Longitude, venue.Coordinates.Latitude),
-		"capacity":       venue.Capacity,
-		"amenities":      venue.Amenities,
-		"price_per_hour": venue.PricePerHour,
-		"availability":   venue.Availability,
-		"status":         venue.Status,
-		"created_at":     venue.CreatedAt,
-		"updated_at":     venue.UpdatedAt,
+	venue := &Venue{}
+	if err := json.Unmarshal(venueBytes, venue); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal to venue struct: %v", err)
+	}
+
+	// Parse coordinates back to struct
+	if coordStr != "" {
+		if err := venue.Coordinates.Scan([]byte(coordStr)); err != nil {
+			return nil, fmt.Errorf("failed to parse coordinates: %v", err)
+		}
+	}
+
+	return venue, nil
+}
+
+// Helper function to convert Venue struct to map for database insertion
+func venueToInsertMap(venue *Venue) (map[string]interface{}, error) {
+	coordsValue, err := venue.Coordinates.Value()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert coordinates: %v", err)
+	}
+
+	return map[string]interface{}{
+		"id":                         venue.Id,
+		"host_id":                    venue.HostId,
+		"name":                       venue.Name,
+		"images":                     venue.Images,
+		"rules":                      venue.Rules,
+		"accessibility":              venue.Accessibility,
+		"venue_type":                 venue.VenueType,
+		"min_booking_duration_hours": venue.MinBookingDurationHours,
+		"cancellation_policy":        venue.CancellationPolicy,
+		"description":                venue.Description,
+		"location":                   venue.Location,
+		"coordinates":                coordsValue,
+		"capacity":                   venue.Capacity,
+		"amenities":                  venue.Amenities,
+		"price_per_hour":             venue.PricePerHour,
+		"availability":               venue.Availability,
+		"status":                     venue.Status,
+		"created_at":                 venue.CreatedAt,
+		"updated_at":                 venue.UpdatedAt,
+	}, nil
+}
+
+func (su *SupabaseRepo) CreateVenue(ctx context.Context, venue *Venue, hostId uuid.UUID, accessToken string) (*Venue, error) {
+	// Convert venue to map for database insertion
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err == nil && authClient != nil {
+			client = authClient
+		}
+	}
+	venueData, err := venueToInsertMap(venue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare venue data: %v", err)
 	}
 
 	// Insert the new venue into the "venues" table
-	data, count, err := su.supabaseClient.
+	data, count, err := client.
 		From(VenuesTable).
 		Insert(venueData, false, "", "", "exact").
 		Execute()
@@ -63,39 +102,25 @@ func (su *SupabaseRepo) CreateVenue(ctx context.Context, venue *Venue, hostId uu
 		return nil, err
 	}
 
-	if err := json.Unmarshal(data, &createdResponse); err != nil {
-		return nil, err
+	if count == 0 {
+		return nil, fmt.Errorf("no venue was created")
 	}
 
-	if count == 0 || len(createdResponse) == 0 {
-		return nil, nil // or return an appropriate error
+	// Unmarshal response to raw venue data
+	var rawVenues []map[string]interface{}
+	if err := json.Unmarshal(data, &rawVenues); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal response: %v", err)
 	}
 
-	// Convert the response back to our Venue struct
-	result := &Venue{
-		Id:           createdResponse[0].Id,
-		HostId:       createdResponse[0].HostId,
-		Name:         createdResponse[0].Name,
-		Images:       createdResponse[0].Images,
-		Description:  createdResponse[0].Description,
-		Location:     createdResponse[0].Location,
-		Capacity:     createdResponse[0].Capacity,
-		Amenities:    createdResponse[0].Amenities,
-		PricePerHour: createdResponse[0].PricePerHour,
-		Availability: createdResponse[0].Availability,
-		Status:       createdResponse[0].Status,
+	if len(rawVenues) == 0 {
+		return nil, fmt.Errorf("no venue returned from database")
 	}
 
-	// Parse the coordinates string back to Coordinates struct
-	err = result.Coordinates.Scan([]byte(createdResponse[0].Coordinates))
+	// Use helper function to convert raw venue to Venue struct
+	result, err := convertRawToVenue(rawVenues[0])
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse coordinates: %v", err)
+		return nil, fmt.Errorf("failed to convert venue: %v", err)
 	}
-
-	// Parse timestamps if needed (though we might not need them for the response)
-	// For now, let's use the original timestamps from the request
-	result.CreatedAt = venue.CreatedAt
-	result.UpdatedAt = venue.UpdatedAt
 
 	return result, nil
 }
@@ -104,50 +129,188 @@ func (su *SupabaseRepo) GetVenueByID(ctx context.Context, id uuid.UUID) (*Venue,
 	return nil, nil
 }
 
-func (su *SupabaseRepo) ListVenues(ctx context.Context, offset, limit int) ([]*Venue, error) {
+func (su *SupabaseRepo) ListVenues(ctx context.Context, offset, limit int) ([]*Venue, int, error) {
+	// Get total count
+	_, total, err := su.supabaseClient.From(VenuesTable).Select("*", "exact", false).Limit(0, "").Execute()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get venues count: %v", err)
+	}
+
 	data, count, err := su.supabaseClient.From(VenuesTable).Select("*", "exact", false).Range(offset, offset+limit-1, "").Execute()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get venues: %v", err)
+		return nil, 0, fmt.Errorf("failed to get venues: %v", err)
 	}
 
 	if count == 0 {
-		return []*Venue{}, nil
+		return []*Venue{}, int(total), nil
 	}
 
 	// Unmarshal directly to a slice of maps to handle coordinates specially
 	var rawVenues []map[string]interface{}
 	if err := json.Unmarshal(data, &rawVenues); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal venues: %v", err)
+		return nil, 0, fmt.Errorf("failed to unmarshal venues: %v", err)
 	}
 
 	venues := make([]*Venue, 0, len(rawVenues))
 	for _, raw := range rawVenues {
-		venue := &Venue{}
-
-		// Extract and remove coordinates from raw data before unmarshaling
-		var coordStr string
-		if coords, exists := raw["coordinates"]; exists {
-			if str, ok := coords.(string); ok {
-				coordStr = str
-			}
-			delete(raw, "coordinates") // Remove coordinates from raw data
+		venue, err := convertRawToVenue(raw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to convert venue data: %v", err)
 		}
-
-		// Marshal back to JSON and unmarshal to venue struct for other fields
-		venueData, _ := json.Marshal(raw)
-		if err := json.Unmarshal(venueData, venue); err != nil {
-			return nil, fmt.Errorf("failed to convert venue data: %v", err)
-		}
-
-		// Handle coordinates separately since it comes as PostGIS string
-		if coordStr != "" {
-			if err := venue.Coordinates.Scan([]byte(coordStr)); err != nil {
-				return nil, fmt.Errorf("failed to parse coordinates for venue %v: %v", raw["id"], err)
-			}
-		}
-
 		venues = append(venues, venue)
 	}
 
-	return venues, nil
+	return venues, int(total), nil
+}
+
+func (su *SupabaseRepo) ListVenueByID(ctx context.Context, id uuid.UUID) (*Venue, error) {
+	data, count, err := su.supabaseClient.From(VenuesTable).Select("*", "exact", false).Eq("id", id.String()).Execute()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get venue: %v", err)
+	}
+
+	if count == 0 {
+		return nil, fmt.Errorf("venue not found")
+	}
+
+	var rawVenues []map[string]interface{}
+	if err := json.Unmarshal(data, &rawVenues); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal venue: %v", err)
+	}
+
+	if len(rawVenues) == 0 {
+		return nil, fmt.Errorf("venue not found")
+	}
+
+	result, err := convertRawToVenue(rawVenues[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert venue: %v", err)
+	}
+
+	return result, nil
+}
+
+func (su *SupabaseRepo) ListVenuesByHost(ctx context.Context, hostId uuid.UUID, offset, limit int, accessToken string) ([]*Venue, int, error) {
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err == nil && authClient != nil {
+			client = authClient
+		}
+	}
+	// Get total count for the host
+	_, total, err := client.From(VenuesTable).Select("*", "exact", false).Limit(0, "").Eq("host_id", hostId.String()).Execute()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get venues count for host: %v", err)
+	}
+
+	data, count, err := client.From(VenuesTable).Select("id, host_id, name, description, images, rules, accessibility, venue_type, min_booking_duration_hours, cancellation_policy,location,capacity, amenities, price_per_hour, availability, status, coordinates, created_at, updated_at", "exact", false).Eq("host_id", hostId.String()).Range(offset, offset+limit-1, "").Execute()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get venues: %v", err)
+	}
+
+	if count == 0 {
+		return []*Venue{}, int(total), nil
+	}
+
+	var rawVenues []map[string]interface{}
+	if err := json.Unmarshal(data, &rawVenues); err != nil {
+		return nil, 0, fmt.Errorf("failed to unmarshal venues: %v", err)
+	}
+
+	if len(rawVenues) == 0 {
+		return nil, 0, fmt.Errorf("no venues found %v", err)
+	}
+
+	venues := make([]*Venue, 0, len(rawVenues))
+	for _, raw := range rawVenues {
+		venue, err := convertRawToVenue(raw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to convert venue %v", err)
+		}
+		venues = append(venues, venue)
+	}
+
+	return venues, int(total), nil
+}
+
+func (su *SupabaseRepo) UpdateVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, venue map[string]interface{}, accessToken string) (*Venue, error) {
+	if len(venue) == 0 {
+		return nil, fmt.Errorf("no fields to update")
+	}
+	// Use an authenticated client if an access token was provided by the caller
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err == nil && authClient != nil {
+			client = authClient
+		}
+	}
+
+	// Process the update data to handle coordinates if present
+	updateData := make(map[string]interface{})
+	for key, value := range venue {
+		if key == "coordinates" {
+			// Handle coordinates field - convert to proper format if provided
+			if coords, ok := value.(*Coordinates); ok {
+				coordsValue, err := coords.Value()
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert coordinates: %v", err)
+				}
+				updateData[key] = coordsValue
+			} else if coords, ok := value.(Coordinates); ok {
+				coordsValue, err := coords.Value()
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert coordinates: %v", err)
+				}
+				updateData[key] = coordsValue
+			} else {
+				// If coordinates is provided as raw value, pass it through
+				updateData[key] = value
+			}
+		} else {
+			// For all other fields, use the value as-is for partial update
+			updateData[key] = value
+		}
+	}
+
+	data, count, err := client.From(VenuesTable).Update(updateData, "", "exact").Eq("id", venue_id.String()).Eq("host_id", host_id.String()).Execute()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to update venue: %v", err)
+	}
+	if count == 0 {
+		return nil, fmt.Errorf("no venue was updated")
+	}
+
+	var rawVenues []map[string]interface{}
+	if err := json.Unmarshal(data, &rawVenues); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal updated venue: %v", err)
+	}
+
+	if len(rawVenues) == 0 {
+		return nil, fmt.Errorf("no venue returned after update")
+	}
+
+	return convertRawToVenue(rawVenues[0])
+}
+
+func (su *SupabaseRepo) DeleteVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, accessToken string) error {
+	client := su.supabaseClient
+	if accessToken != "" {
+		authClient, err := su.GetAuthenticatedClient(accessToken)
+		if err == nil && authClient != nil {
+			client = authClient
+		}
+	}
+
+	_, count, err := client.From(VenuesTable).Delete("", "exact").Eq("id", venue_id.String()).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to delete venue: %v", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("no venue was deleted - venue may not exist")
+	}
+
+	return nil
 }

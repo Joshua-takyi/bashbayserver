@@ -21,7 +21,9 @@ func NewVenuesService(venuesRepo models.VenuesRepo) *VenuesService {
 	}
 }
 
-func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, hostId uuid.UUID) (*models.Venue, error) {
+type ctxKey string
+
+func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, hostId uuid.UUID, accessToken string) (*models.Venue, error) {
 	if err := models.Validate.Struct(venue); err != nil {
 		return nil, fmt.Errorf("invalid venue data provided: %v", err)
 	}
@@ -30,64 +32,103 @@ func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, h
 		venue.Id = uuid.New()
 	}
 
-	// Store original images for upload after successful venue creation
-	originalImages := make([]string, len(venue.Images))
-	copy(originalImages, venue.Images)
+	if accessToken != "" {
+		ctx = context.WithValue(ctx, ctxKey("access_token"), accessToken)
+	}
+
+	// Upload images first if any
+	var uploadedPublicIDs []string
+	if len(venue.Images) > 0 {
+		// Upload images with timeout
+		uploadChan := make(chan struct {
+			urls      []string
+			publicIDs []string
+		}, 1)
+		errorChan := make(chan error, 1)
+
+		go func() {
+			urls, publicIDs, uploadErr := helpers.UploadImages(ctx, connect.Cld, venue.Images, helpers.VenueFolder)
+			if uploadErr != nil {
+				errorChan <- uploadErr
+				return
+			}
+			uploadChan <- struct {
+				urls      []string
+				publicIDs []string
+			}{urls, publicIDs}
+		}()
+
+		// Wait for upload with timeout
+		select {
+		case result := <-uploadChan:
+			venue.Images = result.urls
+			uploadedPublicIDs = result.publicIDs
+			fmt.Printf("Successfully uploaded %d images\n", len(result.urls))
+		case uploadErr := <-errorChan:
+			return nil, fmt.Errorf("failed to upload images: %v", uploadErr)
+		case <-time.After(10 * time.Second):
+			return nil, fmt.Errorf("image upload timeout")
+		}
+	}
 
 	venue.HostId = hostId
 	venue.CreatedAt = now
 	venue.UpdatedAt = now
 	venue.Status = models.StatusPending
-	venue.Images = []string{} // Clear images temporarily
 
-	// First, create the venue in the database
-	createdVenue, err := vs.venuesRepo.CreateVenue(ctx, venue, hostId)
+	// Create the venue in the database with the uploaded image URLs
+	createdVenue, err := vs.venuesRepo.CreateVenue(ctx, venue, hostId, accessToken)
 	if err != nil {
-		return nil, err // Return early if venue creation fails
-	}
-
-	// Only upload images if venue creation was successful
-	if len(originalImages) > 0 {
-		// Upload images with timeout
-		uploadChan := make(chan []string, 1)
-		errorChan := make(chan error, 1)
-
-		go func() {
-			urls, uploadErr := helpers.UploadImages(ctx, connect.Cld, originalImages, helpers.VenueFolder)
-			if uploadErr != nil {
-				errorChan <- uploadErr
-				return
-			}
-			uploadChan <- urls
-		}()
-
-		// Wait for upload with timeout
-		select {
-		case urls := <-uploadChan:
-			createdVenue.Images = urls
-			fmt.Printf("Successfully uploaded %d images\n", len(urls))
-		case uploadErr := <-errorChan:
-			fmt.Printf("Failed to upload images: %v\n", uploadErr)
-			// Images failed to upload, but venue is already created
-		case <-time.After(10 * time.Second):
-			fmt.Printf("Image upload timeout\n")
-			// Timeout occurred, but venue is already created
+		// If venue creation fails, clean up uploaded images
+		if len(uploadedPublicIDs) > 0 {
+			helpers.DeleteImages(ctx, connect.Cld, uploadedPublicIDs)
 		}
+		return nil, err
 	}
 
 	return createdVenue, nil
 }
 
-func (vs *VenuesService) GetVenueByID(ctx context.Context, id uuid.UUID) (*models.Venue, error) {
-	return vs.venuesRepo.GetVenueByID(ctx, id)
-}
-
-func (vs *VenuesService) ListVenues(ctx context.Context, offset, limit int) ([]*models.Venue, error) {
+func (vs *VenuesService) ListVenues(ctx context.Context, offset, limit int) ([]*models.Venue, int, error) {
 
 	// Validate input parameters
 	if offset < 0 || limit <= 0 {
-		return nil, fmt.Errorf("invalid offset or limit")
+		return nil, 0, fmt.Errorf("invalid offset or limit")
 	}
 
 	return vs.venuesRepo.ListVenues(ctx, offset, limit)
+}
+
+func (vs *VenuesService) ListVenueByID(ctx context.Context, id uuid.UUID) (*models.Venue, error) {
+	if id == uuid.Nil {
+		return nil, fmt.Errorf("invalid venue ID")
+	}
+
+	return vs.venuesRepo.ListVenueByID(ctx, id)
+}
+
+func (vs *VenuesService) DeleteVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, accessToken string) error {
+	if host_id == uuid.Nil || venue_id == uuid.Nil {
+		return fmt.Errorf("invalid host ID or venue ID")
+	}
+
+	// Store access token in context so repo can create an authenticated client
+	if accessToken != "" {
+		ctx = context.WithValue(ctx, ctxKey("access_token"), accessToken)
+	}
+
+	return vs.venuesRepo.DeleteVenue(ctx, host_id, venue_id, accessToken)
+}
+
+func (vs *VenuesService) ListVenuesByHost(ctx context.Context, hostId uuid.UUID, offset, limit int, accessToken string) ([]*models.Venue, int, error) {
+
+	if offset < 0 || limit <= 0 {
+		return nil, 0, fmt.Errorf("invalid offset or limit")
+	}
+
+	if hostId == uuid.Nil {
+		return nil, 0, fmt.Errorf("invalid host ID")
+	}
+
+	return vs.venuesRepo.ListVenuesByHost(ctx, hostId, offset, limit, accessToken)
 }

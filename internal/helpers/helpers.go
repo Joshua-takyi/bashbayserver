@@ -13,6 +13,7 @@ import (
 	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/joshua-takyi/ww/internal/models"
 )
 
 const (
@@ -90,11 +91,9 @@ func IsPasswordStrong(password string) bool {
 	return hasLower && hasUpper && hasNumber && hasSpecial
 }
 
-func UploadImages(ctx context.Context, cld *cloudinary.Cloudinary, imageNames []string, imagePath string) ([]string, error) {
+func UploadImages(ctx context.Context, cld *cloudinary.Cloudinary, imageNames []string, imagePath string) ([]string, []string, error) {
 	var urls []string
-
-	// fmt.Printf("UploadImages called with %d images, imagePath: %s\n", len(imageNames), imagePath)
-	// fmt.Printf("Cloudinary client is nil: %v\n", cld == nil)
+	var publicIDs []string
 
 	for i, filePath := range imageNames {
 		// fmt.Printf("Processing image %d: %s\n", i, filePath)
@@ -103,23 +102,60 @@ func UploadImages(ctx context.Context, cld *cloudinary.Cloudinary, imageNames []
 			continue
 		}
 		uploadResult, err := cld.Upload.Upload(ctx, filePath, uploader.UploadParams{
-			// Moderation: "webpurify", // Temporarily remove moderation
 			Folder: imagePath,
 			Tags:   []string{"ww-app"},
 		})
 
 		if err != nil {
 			fmt.Printf("Upload failed for %s: %v\n", filePath, err)
-			return nil, fmt.Errorf("failed to upload image %s: %v", filePath, err)
+			return nil, nil, fmt.Errorf("failed to upload image %s: %v", filePath, err)
 		}
 
-		// debugging info
-		// fmt.Printf("Upload result: %+v\n", uploadResult)
-		// fmt.Printf("SecureURL: '%s'\n", uploadResult.SecureURL)
-		// fmt.Printf("PublicID: '%s'\n", uploadResult.PublicID)
 		urls = append(urls, uploadResult.SecureURL)
+		publicIDs = append(publicIDs, uploadResult.PublicID)
 	}
 
 	// fmt.Printf("Returning %d URLs: %v\n", len(urls), urls)
-	return urls, nil
+	return urls, publicIDs, nil
+}
+
+func DeleteImages(ctx context.Context, cld *cloudinary.Cloudinary, publicIDs []string) error {
+	for _, publicID := range publicIDs {
+		if strings.TrimSpace(publicID) == "" {
+			continue
+		}
+		_, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
+			PublicID: publicID,
+		})
+		if err != nil {
+			fmt.Printf("Failed to delete image %s: %v\n", publicID, err)
+			// Continue deleting others
+		}
+	}
+	return nil
+}
+
+func SuccessResponse(data interface{}, message string) models.ApiResponse {
+	return models.ApiResponse{
+		Success: true,
+		Data:    data,
+		Message: message,
+	}
+}
+
+func ErrorResponse(err string) models.ApiResponse {
+	return models.ApiResponse{
+		Success: false,
+		Error:   err,
+	}
+}
+
+func PaginatedResponse(data interface{}, page, limit, total int) models.ApiResponse {
+	return models.ApiResponse{
+		Success: true,
+		Data:    data,
+		Page:    page,
+		Limit:   limit,
+		Total:   total,
+	}
 }

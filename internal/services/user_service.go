@@ -73,3 +73,27 @@ func (us *UserService) GetUser(id uuid.UUID, accessToken string) (*models.User, 
 	}
 	return res, nil
 }
+
+func (us *UserService) UpdateUser(ctx context.Context, user map[string]interface{}, userid uuid.UUID, accessToken string) (*models.User, error) {
+	// if err := models.Validate.Struct(user); err != nil {
+	// 	return nil, err
+	// }
+
+	now := time.Now()
+	user["updated_at"] = now
+
+	updatedUser, err := us.userRepo.UpdateUser(ctx, user, userid, accessToken)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update user: %v", err)
+	}
+
+	return updatedUser, nil
+}
+
+func (us *UserService) DeleteUser(ctx context.Context, id uuid.UUID, accessToken string) error {
+	err := us.userRepo.DeleteUser(ctx, id, accessToken)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %v", err)
+	}
+	return nil
+}
