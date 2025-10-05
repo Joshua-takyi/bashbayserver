@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,8 +23,8 @@ const (
 
 // Coordinates maps to PostGIS geography(Point,4326)
 type Coordinates struct {
-	Latitude  float64 `json:"latitude"`
-	Longitude float64 `json:"longitude"`
+	Latitude  float64 `json:"lat"`
+	Longitude float64 `json:"lng"`
 }
 
 // Scan allows Coordinates to be read from Postgres
@@ -36,7 +38,10 @@ func (c *Coordinates) Scan(src interface{}) error {
 	case string:
 		dataStr = v
 	case nil:
-		return fmt.Errorf("coordinates cannot be nil")
+		// Handle nil coordinates gracefully - set to zero
+		c.Latitude = 0
+		c.Longitude = 0
+		return nil
 	default:
 		return fmt.Errorf("cannot scan %T into Coordinates", src)
 	}
@@ -60,8 +65,8 @@ func (c *Coordinates) Scan(src interface{}) error {
 		return nil
 	}
 
-	// If WKT parsing failed, try EWKB (hex-encoded binary)
-	if len(dataStr) >= 32 { // EWKB for point should be at least 32 hex chars
+	// Check if it's a hex-encoded EWKB string
+	if len(dataStr) >= 32 && isHexString(dataStr) {
 		// Decode hex string to bytes
 		ewkbBytes, err := hex.DecodeString(dataStr)
 		if err != nil {
@@ -72,7 +77,29 @@ func (c *Coordinates) Scan(src interface{}) error {
 		return c.parseEWKB(ewkbBytes)
 	}
 
-	return fmt.Errorf("failed to parse coordinates from format: %s (input: %q)", err.Error(), dataStr)
+	// If all parsing fails, try to parse as plain coordinates
+	// This handles cases where coordinates might be stored as "lat,lng" or similar
+	if parts := strings.Split(dataStr, ","); len(parts) == 2 {
+		if lat, err := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64); err == nil {
+			if lng, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64); err == nil {
+				c.Latitude = lat
+				c.Longitude = lng
+				return nil
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to parse coordinates from: %q", dataStr)
+}
+
+// isHexString checks if a string contains only hexadecimal characters
+func isHexString(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 // parseEWKB parses Extended Well-Known Binary format for PostGIS Point

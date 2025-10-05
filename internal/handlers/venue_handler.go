@@ -16,7 +16,6 @@ import (
 func CreateVenueHandler(v *services.VenuesService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var venue models.Venue
-
 		userClaims, exists := c.Get("user")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -241,5 +240,95 @@ func ListVenuesByHost(v *services.VenuesService) gin.HandlerFunc {
 
 		page := (offsetInt / limitInt) + 1
 		c.JSON(http.StatusOK, helpers.PaginatedResponse(vD, page, limitInt, total))
+	}
+}
+
+func QueryVenues(v *services.VenuesService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Parse pagination parameters
+		limit := c.DefaultQuery("limit", "10")
+		offset := c.DefaultQuery("offset", "0")
+		limitInt, err := strconv.Atoi(limit)
+		if err != nil || limitInt <= 0 {
+			c.JSON(http.StatusBadRequest, helpers.ErrorResponse("invalid limit parameter"))
+			return
+		}
+		offsetInt, err := strconv.Atoi(offset)
+		if err != nil || offsetInt < 0 {
+			c.JSON(http.StatusBadRequest, helpers.ErrorResponse("invalid offset parameter"))
+			return
+		}
+
+		// Build query map from request parameters
+		query := make(map[string]interface{})
+
+		// Venue type filter
+		if venueType := c.Query("venue_type"); venueType != "" {
+			query["venue_type"] = venueType
+		}
+
+		// Price range filters
+		if minPrice := c.Query("min_price"); minPrice != "" {
+			if minPriceFloat, err := strconv.ParseFloat(minPrice, 64); err == nil {
+				query["min_price"] = minPriceFloat
+			}
+		}
+		if maxPrice := c.Query("max_price"); maxPrice != "" {
+			if maxPriceFloat, err := strconv.ParseFloat(maxPrice, 64); err == nil {
+				query["max_price"] = maxPriceFloat
+			}
+		}
+
+		// Capacity range filters
+		if minCapacity := c.Query("min_capacity"); minCapacity != "" {
+			if minCapInt, err := strconv.Atoi(minCapacity); err == nil {
+				query["min_capacity"] = minCapInt
+			}
+		}
+		if maxCapacity := c.Query("max_capacity"); maxCapacity != "" {
+			if maxCapInt, err := strconv.Atoi(maxCapacity); err == nil {
+				query["max_capacity"] = maxCapInt
+			}
+		}
+
+		// Location filter (partial match)
+		if location := c.Query("location"); location != "" {
+			query["location"] = location
+		}
+
+		// Amenities filter (comma-separated)
+		if amenities := c.Query("amenities"); amenities != "" {
+			query["amenities"] = strings.Split(amenities, ",")
+		}
+
+		// Status filter
+		if status := c.Query("status"); status != "" {
+			query["status"] = status
+		}
+
+		// Name filter (partial match)
+		if name := c.Query("name"); name != "" {
+			query["name"] = name
+		}
+
+		// Description filter (partial match)
+		if description := c.Query("description"); description != "" {
+			query["description"] = description
+		}
+
+		// If no query parameters provided, return bad request
+		if len(query) == 0 {
+			c.JSON(http.StatusBadRequest, helpers.ErrorResponse("at least one query parameter is required"))
+			return
+		}
+
+		venues, total, err := v.QueryVenues(c.Request.Context(), query, offsetInt, limitInt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, helpers.ErrorResponse(err.Error()))
+			return
+		}
+
+		page := (offsetInt / limitInt) + 1
+		c.JSON(http.StatusOK, helpers.PaginatedResponse(venues, page, limitInt, total))
 	}
 }

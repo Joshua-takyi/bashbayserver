@@ -9,12 +9,13 @@ import (
 	"github.com/joshua-takyi/ww/internal/middleware"
 )
 
-// SetupRoutes configures all routes with the dependency container
 func SetupRoutes(container *container.Container) *gin.Engine {
-	// Set Gin mode for production
 	gin.SetMode(gin.ReleaseMode)
-
 	r := gin.New()
+	// what this does is to redirect requests with a trailing slash to the same path without the trailing slash.
+	// For example, a request to /api/v1/users/ would be redirected to /api/v1/users
+	// This is useful for ensuring consistent URL patterns and avoiding duplicate content issues.
+	// r.RedirectTrailingSlash = true
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
@@ -27,10 +28,8 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 	r.Use(middleware.RequestID())
 	r.Use(middleware.StructuredLogger(container.Logger))
 	r.Use(middleware.ErrorHandler(container.Logger))
-	// r.Use(middleware.CORS())
 	r.Use(gin.Recovery())
 
-	// API version 1
 	v1 := r.Group("/api/v1")
 	{
 		// Health check
@@ -44,6 +43,11 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 		// public routes
 		v1.POST("/signup", handlers.CreateUser(container.UserService))
 		v1.POST("/login", handlers.AuthenticateUser(container.UserService))
+
+		// venues public route
+
+		v1.GET("/search", handlers.QueryVenues(container.VenueService))
+
 	}
 
 	protected := v1.Group("/")
@@ -95,6 +99,8 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 		venueRoutes.GET("/:id", handlers.ListVenueByID(container.VenueService))
 		venueRoutes.DELETE("/:id", handlers.DeleteVenue(container.VenueService))
 		venueRoutes.GET("/host-venues/:host_id", handlers.ListVenuesByHost(container.VenueService))
+		venueRoutes.GET("/search", handlers.QueryVenues(container.VenueService))
+		// venueRoutes.PATCH("/:id", handlers.UpdateVenue(container.VenueService))
 
 	}
 	//

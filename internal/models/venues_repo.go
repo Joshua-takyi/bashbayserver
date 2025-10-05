@@ -15,6 +15,8 @@ type VenuesRepo interface {
 	ListVenues(ctx context.Context, offset, limit int) ([]*Venue, int, error)
 	UpdateVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, venue map[string]interface{}, accessToken string) (*Venue, error)
 	DeleteVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, accessToken string) error
+	// full query methods
+	QueryVenues(ctx context.Context, query map[string]interface{}, offset, limit int) ([]*Venue, int, error)
 }
 
 func convertRawToVenue(rawVenue map[string]interface{}) (*Venue, error) {
@@ -313,4 +315,148 @@ func (su *SupabaseRepo) DeleteVenue(ctx context.Context, host_id uuid.UUID, venu
 	}
 
 	return nil
+}
+
+func (su *SupabaseRepo) QueryVenues(ctx context.Context, query map[string]interface{}, offset, limit int) ([]*Venue, int, error) {
+	if len(query) == 0 {
+		return su.ListVenues(ctx, offset, limit)
+	}
+
+	// Start building the query
+	client := su.supabaseClient.From(VenuesTable).Select("*", "exact", false)
+
+	// Apply filters
+	for key, value := range query {
+		switch key {
+		case "venue_type":
+			if venueType, ok := value.(string); ok && venueType != "" {
+				client = client.Ilike("venue_type", venueType)
+			}
+		case "min_price":
+			if minPrice, ok := value.(float64); ok {
+				client = client.Gte("price_per_hour", fmt.Sprintf("%f", minPrice))
+			}
+		case "max_price":
+			if maxPrice, ok := value.(float64); ok {
+				client = client.Lte("price_per_hour", fmt.Sprintf("%f", maxPrice))
+			}
+		case "min_capacity":
+			if minCap, ok := value.(int); ok {
+				client = client.Gte("capacity", fmt.Sprintf("%d", minCap))
+			}
+		case "max_capacity":
+			if maxCap, ok := value.(int); ok {
+				client = client.Lte("capacity", fmt.Sprintf("%d", maxCap))
+			}
+		case "location":
+			if location, ok := value.(string); ok && location != "" {
+				client = client.Ilike("location", "%"+location+"%")
+			}
+		case "status":
+			if status, ok := value.(string); ok && status != "" {
+				client = client.Ilike("status", status)
+			}
+		case "name":
+			if name, ok := value.(string); ok && name != "" {
+				client = client.Ilike("name", "%"+name+"%")
+			}
+		case "description":
+			if desc, ok := value.(string); ok && desc != "" {
+				client = client.Ilike("description", "%"+desc+"%")
+			}
+		case "amenities":
+			// For amenities, we need to check if any of the requested amenities exist
+			// This is more complex as amenities is a JSONB field
+			if amenities, ok := value.([]string); ok && len(amenities) > 0 {
+				// For simplicity, we'll check if the amenities array contains any of the requested ones
+				// This might need refinement based on how amenities are stored
+				for _, amenity := range amenities {
+					// Use Ilike for case-insensitive search in JSONB
+					client = client.Ilike("amenities", "%"+amenity+"%")
+				}
+			}
+		}
+	}
+
+	// Get total count with filters applied
+	countQuery := su.supabaseClient.From(VenuesTable).Select("*", "exact", false)
+	// Apply the same filters to count query
+	for key, value := range query {
+		switch key {
+		case "venue_type":
+			if venueType, ok := value.(string); ok && venueType != "" {
+				countQuery = countQuery.Ilike("venue_type", venueType)
+			}
+		case "min_price":
+			if minPrice, ok := value.(float64); ok {
+				countQuery = countQuery.Gte("price_per_hour", fmt.Sprintf("%f", minPrice))
+			}
+		case "max_price":
+			if maxPrice, ok := value.(float64); ok {
+				countQuery = countQuery.Lte("price_per_hour", fmt.Sprintf("%f", maxPrice))
+			}
+		case "min_capacity":
+			if minCap, ok := value.(int); ok {
+				countQuery = countQuery.Gte("capacity", fmt.Sprintf("%d", minCap))
+			}
+		case "max_capacity":
+			if maxCap, ok := value.(int); ok {
+				countQuery = countQuery.Lte("capacity", fmt.Sprintf("%d", maxCap))
+			}
+		case "location":
+			if location, ok := value.(string); ok && location != "" {
+				countQuery = countQuery.Ilike("location", "%"+location+"%")
+			}
+		case "status":
+			if status, ok := value.(string); ok && status != "" {
+				countQuery = countQuery.Ilike("status", status)
+			}
+		case "name":
+			if name, ok := value.(string); ok && name != "" {
+				countQuery = countQuery.Ilike("name", "%"+name+"%")
+			}
+		case "description":
+			if desc, ok := value.(string); ok && desc != "" {
+				countQuery = countQuery.Ilike("description", "%"+desc+"%")
+			}
+		case "amenities":
+			if amenities, ok := value.([]string); ok && len(amenities) > 0 {
+				for _, amenity := range amenities {
+					countQuery = countQuery.Ilike("amenities", "%"+amenity+"%")
+				}
+			}
+		}
+	}
+
+	_, total, err := countQuery.Limit(0, "").Execute()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get venues count: %v", err)
+	}
+
+	// Execute the main query with pagination
+	data, count, err := client.Range(offset, offset+limit-1, "").Execute()
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query venues: %v", err)
+	}
+
+	if count == 0 {
+		return []*Venue{}, int(total), nil
+	}
+
+	// Unmarshal and convert venues
+	var rawVenues []map[string]interface{}
+	if err := json.Unmarshal(data, &rawVenues); err != nil {
+		return nil, 0, fmt.Errorf("failed to unmarshal venues: %v", err)
+	}
+
+	venues := make([]*Venue, 0, len(rawVenues))
+	for _, raw := range rawVenues {
+		venue, err := convertRawToVenue(raw)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to convert venue data: %v", err)
+		}
+		venues = append(venues, venue)
+	}
+
+	return venues, int(total), nil
 }

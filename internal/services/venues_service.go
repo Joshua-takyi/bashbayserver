@@ -132,3 +132,13 @@ func (vs *VenuesService) ListVenuesByHost(ctx context.Context, hostId uuid.UUID,
 
 	return vs.venuesRepo.ListVenuesByHost(ctx, hostId, offset, limit, accessToken)
 }
+
+func (vs *VenuesService) QueryVenues(ctx context.Context, query map[string]interface{}, offset, limit int) ([]*models.Venue, int, error) {
+	if offset < 0 || limit <= 0 {
+		return nil, 0, fmt.Errorf("invalid offset or limit")
+	}
+	if len(query) == 0 {
+		return nil, 0, fmt.Errorf("query parameters cannot be empty")
+	}
+	return vs.venuesRepo.QueryVenues(ctx, query, offset, limit)
+}
