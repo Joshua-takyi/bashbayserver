@@ -145,24 +145,121 @@ func (c Coordinates) Value() (driver.Value, error) {
 	return fmt.Sprintf("SRID=4326;POINT(%f %f)", c.Longitude, c.Latitude), nil
 }
 
+type DateRange struct {
+	Start string `json:"start"` // YYYY-MM-DD
+	End   string `json:"end"`   // YYYY-MM-DD; optional, if empty = same as Start
+}
+
+type TimeRange struct {
+	Start string `json:"start"` // HH:MM (24h)
+	End   string `json:"end"`   // HH:MM (24h)
+}
+
+type Availability struct {
+	// Host-defined blocks (days the venue is NOT available)
+	UnavailableDates      []string    `json:"unavailable_dates,omitempty"`       // e.g., ["2025-10-12","2025-10-18"]
+	UnavailableDateRanges []DateRange `json:"unavailable_date_ranges,omitempty"` // e.g., [{"start":"2025-12-24","end":"2025-12-26"}]
+
+	// Optional: recurring open hours per weekday ("Mon".."Sun"); useful if you later want hourly booking search
+	WeeklyHours map[string][]TimeRange `json:"weekly_hours,omitempty"` // {"Mon":[{"start":"09:00","end":"17:00"}]}
+
+	Timezone string `json:"timezone,omitempty"` // e.g., "America/Los_Angeles"
+}
+
+// IsDateUnavailable returns true if a given date (in venue timezone if you later add TZ handling) is blocked.
+func (a Availability) IsDateUnavailable(d time.Time) bool {
+	ds := d.Format("2006-01-02")
+	for _, s := range a.UnavailableDates {
+		if s == ds {
+			return true
+		}
+	}
+
+	for _, r := range a.UnavailableDateRanges {
+		if r.Start == "" {
+			continue
+		}
+		end := r.End
+		if end == "" {
+			end = r.Start
+		}
+		startT, err1 := time.Parse("2006-01-02", r.Start)
+		endT, err2 := time.Parse("2006-01-02", end)
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		// Inclusive range
+		if !d.Before(startT) && !d.After(endT) {
+			return true
+		}
+	}
+	return false
+}
+
+func daysIn(month time.Month, year int) int {
+	return time.Date(year, month+1, 0, 0, 0, 0, 0, time.UTC).Day()
+}
+
+// CalendarSnapshot returns a map[dayOfMonth]unavailable for the requested month.
+// Use this to paint the calendar.
+func (a Availability) CalendarSnapshot(year int, month time.Month) map[int]bool {
+	days := daysIn(month, year)
+	out := make(map[int]bool, days)
+	for day := 1; day <= days; day++ {
+		date := time.Date(year, month, day, 0, 0, 0, 0, time.UTC)
+		out[day] = a.IsDateUnavailable(date)
+	}
+	return out
+}
+
 type Venue struct {
-	Id                      uuid.UUID              `db:"id" json:"id,omitempty"`
-	HostId                  uuid.UUID              `db:"host_id" json:"host_id,omitempty"`
-	Images                  []string               `db:"images" json:"images,omitempty"`
-	Name                    string                 `db:"name" json:"name,omitempty"`
-	VenueType               string                 `db:"venue_type" json:"venue_type,omitempty"`
-	Rules                   []string               `db:"rules" json:"rules,omitempty"`
-	Accessibility           []string               `db:"accessibility" json:"accessibility,omitempty"`
-	MinBookingDurationHours int64                  `db:"min_booking_duration_hours" json:"min_booking_duration_hours,omitempty"`
-	CancellationPolicy      string                 `db:"cancellation_policy" json:"cancellation_policy,omitempty"`
-	Description             string                 `db:"description" json:"description,omitempty"`
-	Location                string                 `db:"location" json:"location,omitempty"`
-	Coordinates             Coordinates            `db:"coordinates" json:"coordinates,omitempty"`
-	Capacity                int                    `db:"capacity" json:"capacity,omitempty"`
-	Amenities               map[string]interface{} `db:"amenities" json:"amenities,omitempty"`
-	PricePerHour            float64                `db:"price_per_hour" json:"price_per_hour,omitempty"`
-	Availability            map[string]interface{} `db:"availability" json:"availability,omitempty"`
-	Status                  VenueStatus            `db:"status" json:"status,omitempty"`
-	CreatedAt               time.Time              `db:"created_at" json:"created_at,omitempty"`
-	UpdatedAt               time.Time              `db:"updated_at" json:"updated_at,omitempty"`
+	Id     uuid.UUID `db:"id" json:"id,omitempty"`
+	HostId uuid.UUID `db:"host_id" json:"host_id,omitempty"`
+
+	// MARKETING & CORE INFO
+	Name         string   `db:"name" json:"name,omitempty"`
+	VibeHeadline string   `db:"vibe_headline" json:"vibe_headline,omitempty"`
+	Description  string   `db:"description" json:"description,omitempty"`
+	Images       []string `db:"images" json:"images,omitempty"`
+	VenueType    []string `db:"venue_type" json:"venue_type,omitempty"`
+	Slug         string   `db:"slug" json:"slug,omitempty"`
+	Tags         []string `db:"tags" json:"tags,omitempty"`
+	Region       string   `db:"region" json:"region,omitempty" validate:"required"`
+	// CAPACITY & DIMENSIONS
+	Capacity          int `db:"capacity" json:"capacity,omitempty"`                       // Total max capacity
+	SeatingCapacity   int `db:"seating_capacity" json:"seating_capacity,omitempty"`       // NEW
+	StandingCapacity  int `db:"standing_capacity" json:"standing_capacity,omitempty"`     // NEW
+	CeilingHeightFeet int `db:"ceiling_height_feet" json:"ceiling_height_feet,omitempty"` // NEW
+
+	// LOCATION & LOGISTICS
+	Location      string      `db:"location" json:"location,omitempty"`
+	Coordinates   Coordinates `db:"coordinates" json:"coordinates"`
+	Accessibility []string    `db:"accessibility" json:"accessibility,omitempty"`
+	LoadInAccess  string      `db:"load_in_access" json:"load_in_access,omitempty"`
+
+	// AMENITIES & RULES
+	Amenities               map[string]any `db:"amenities" json:"amenities,omitempty"`
+	Rules                   []string       `db:"rules" json:"rules,omitempty"`
+	AlcoholPolicy           string         `db:"alcohol_policy" json:"alcohol_policy,omitempty"`                       // NEW
+	ExternalCateringAllowed bool           `db:"external_catering_allowed" json:"external_catering_allowed,omitempty"` // NEW
+
+	// PRICING & BOOKING
+	PriceModel              string  `db:"price_model" json:"price_model,omitempty" validate:"required,oneof=HOURLY FIXED QUOTE_ONLY"` // "HOURLY", "FIXED", "QUOTE_ONLY"
+	PricePerHour            float64 `db:"price_per_hour" json:"price_per_hour,omitempty"`
+	MinBookingDurationHours int64   `db:"min_booking_duration_hours" json:"min_booking_duration_hours,omitempty"`
+	FixedPricePackagePrice  float64 `db:"fixed_price_package_price" json:"fixed_price_package_price,omitempty"`
+	PackageDurationHours    int64   `db:"package_duration_hours" json:"package_duration_hours,omitempty"`
+	OverTimeRatePerHour     float64 `db:"overtime_rate_per_hour" json:"overtime_rate_per_hour,omitempty"`
+	CleaningFee             float64 `db:"cleaning_fee" json:"cleaning_fee,omitempty"`
+	SecurityDeposit         float64 `db:"security_deposit" json:"security_deposit,omitempty"`
+	// TaxRate                 float64  `db:"tax_rate" json:"tax_rate,omitempty"`
+	SetupTakedownDuration float64  `db:"setup_takedown_duration" json:"setup_takedown_duration,omitempty"`
+	IncludedItems         []string `db:"included_items" json:"included_items,omitempty"`
+
+	// STATUS & ADMIN
+	CancellationPolicy string       `db:"cancellation_policy" json:"cancellation_policy,omitempty"`
+	Availability       Availability `db:"availability" json:"availability,omitempty"`
+	Status             VenueStatus  `db:"status" json:"status,omitempty"`
+	CreatedAt          time.Time    `db:"created_at" json:"created_at"`
+	UpdatedAt          time.Time    `db:"updated_at" json:"updated_at"`
 }

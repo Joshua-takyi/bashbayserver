@@ -43,10 +43,11 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 		// public routes
 		v1.POST("/signup", handlers.CreateUser(container.UserService))
 		v1.POST("/login", handlers.AuthenticateUser(container.UserService))
+		// Add this to the public routes section (around line 49)
+		// v1.GET("/users/:id/public", handlers.GetPublicUserProfile(container.UserService))
 
 		// venues public route
-
-		v1.GET("/search", handlers.QueryVenues(container.VenueService))
+		v1.GET("/venues/search", handlers.QueryVenues(container.VenueService))
 
 	}
 
@@ -70,19 +71,22 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 			}
 
 			c.JSON(200, gin.H{
-				"status":    "OK",
-				"user_id":   enhancedClaims.UserID,
-				"email":     enhancedClaims.Email,
-				"role":      enhancedClaims.Role,
-				"username":  enhancedClaims.Username,
-				"is_admin":  enhancedClaims.IsAdmin(),
-				"auth_role": enhancedClaims.Role, // This is the "authenticated" role from Supabase auth
+				"status":       "OK",
+				"user_id":      enhancedClaims.UserID,
+				"email":        enhancedClaims.Email,
+				"role":         enhancedClaims.Role,
+				"username":     enhancedClaims.Username,
+				"is_admin":     enhancedClaims.IsAdmin(),
+				"auth_role":    enhancedClaims.Role, // This is the "authenticated" role from Supabase auth
+				"fullname":     enhancedClaims.Fullname,
+				"phone_number": enhancedClaims.PhoneNumber,
 			})
 		})
 
 		userRoutes.GET("/:id", handlers.GetUser(container.UserService))
 		userRoutes.PATCH("/:id", handlers.UpdateUser(container.UserService))
 		userRoutes.DELETE("/:id", handlers.DeleteUser(container.UserService))
+		userRoutes.PATCH("/avatar/:id", handlers.UploadAvatar(container.UserService))
 	}
 
 	// Future routes for other services
@@ -99,7 +103,7 @@ func SetupRoutes(container *container.Container) *gin.Engine {
 		venueRoutes.GET("/:id", handlers.ListVenueByID(container.VenueService))
 		venueRoutes.DELETE("/:id", handlers.DeleteVenue(container.VenueService))
 		venueRoutes.GET("/host-venues/:host_id", handlers.ListVenuesByHost(container.VenueService))
-		venueRoutes.GET("/search", handlers.QueryVenues(container.VenueService))
+		// venueRoutes.GET("/search", handlers.QueryVenues(container.VenueService))
 		// venueRoutes.PATCH("/:id", handlers.UpdateVenue(container.VenueService))
 
 	}

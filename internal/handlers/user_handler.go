@@ -51,18 +51,18 @@ func AuthenticateUser(u *services.UserService) gin.HandlerFunc {
 		isProduction := os.Getenv("GIN_MODE") == "production"
 
 		if tokenRes, ok := authResponse.(*types.TokenResponse); ok && tokenRes.AccessToken != "" {
-			// Access token
+			// Access token - expires in 1 hour (3600 seconds)
 			c.SetCookie(
 				"access_token",
 				tokenRes.AccessToken,
-				tokenRes.ExpiresIn*24*7,
+				tokenRes.ExpiresIn,
 				"/",
 				"", // let Gin pick current domain
 				isProduction,
 				true,
 			)
 
-			// Refresh token
+			// Refresh token - expires in 30 days
 			c.SetCookie(
 				"refresh_token",
 				tokenRes.RefreshToken,
@@ -250,5 +250,48 @@ func DeleteUser(u *services.UserService) gin.HandlerFunc {
 			return
 		}
 		c.JSON(200, gin.H{"message": "user deleted successfully"})
+	}
+}
+
+func UploadAvatar(u *services.UserService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		paramId := strings.TrimSpace(c.Param("id"))
+		if paramId == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "user ID is required",
+			})
+			return
+		}
+		var imageData string
+		if err := c.ShouldBindJSON(&imageData); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		claims, exists := c.Get("user")
+		if !exists {
+			c.JSON(401, gin.H{"error": "Unauthorized"})
+			return
+		}
+		userClaims, ok := claims.(*helpers.EnhancedClaims)
+		if !ok {
+			c.JSON(500, gin.H{"error": "Invalid user claims"})
+			return
+		}
+		userId, err := uuid.Parse(userClaims.UserID)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		accessToken, err := c.Cookie("access_token")
+		if err != nil {
+			c.JSON(401, gin.H{"error": "Access token not found"})
+			return
+		}
+		avatarURL, err := u.UploadAvatar(c.Request.Context(), userId, imageData, accessToken)
+		if err != nil {
+			c.JSON(500, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(200, gin.H{"avatar_url": avatarURL})
 	}
 }

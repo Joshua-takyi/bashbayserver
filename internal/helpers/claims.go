@@ -2,9 +2,12 @@ package helpers
 
 type EnhancedClaims struct {
 	*CustomClaims
-	Role     string `json:"role"`
-	UserID   string `json:"id"`
-	Username string `json:"username,omitempty"`
+	Role        string `json:"role"`
+	UserID      string `json:"id"`
+	Email       string `json:"email,omitempty"`
+	Username    string `json:"username,omitempty"`
+	Fullname    string `json:"fullname,omitempty"`
+	PhoneNumber string `json:"phone_number,omitempty"`
 }
 
 // Helper methods for role checking

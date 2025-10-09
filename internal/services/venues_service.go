@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,19 +22,67 @@ func NewVenuesService(venuesRepo models.VenuesRepo) *VenuesService {
 	}
 }
 
-type ctxKey string
+// ...existing code...
+
+func ValidateAndNormalizeVenuePricing(v *models.Venue) error {
+	if v == nil {
+		return fmt.Errorf("venue is nil")
+	}
+
+	pm := strings.ToUpper(strings.TrimSpace(v.PriceModel))
+	v.PriceModel = pm // normalize casing for DB constraints
+
+	switch pm {
+	case "HOURLY":
+		if v.PricePerHour <= 0 {
+			return fmt.Errorf("price_per_hour must be > 0 for HOURLY")
+		}
+		if v.MinBookingDurationHours <= 0 {
+			return fmt.Errorf("min_booking_duration_hours must be > 0 for HOURLY")
+		}
+		// Not used by HOURLY
+		v.FixedPricePackagePrice = 0
+		v.PackageDurationHours = 0
+
+	case "FIXED":
+		if v.FixedPricePackagePrice <= 0 {
+			return fmt.Errorf("fixed_price_package_price must be > 0 for FIXED")
+		}
+		if v.PackageDurationHours <= 0 {
+			return fmt.Errorf("package_duration_hours must be > 0 for FIXED")
+		}
+		// Not used by FIXED
+		v.PricePerHour = 0
+		v.MinBookingDurationHours = 0
+
+	case "QUOTE_ONLY":
+		// No fixed or hourly prices; min booking not used
+		v.PricePerHour = 0
+		v.MinBookingDurationHours = 0
+		v.FixedPricePackagePrice = 0
+		v.PackageDurationHours = 0
+
+	default:
+		return fmt.Errorf("unsupported price_model: %s (expected HOURLY, FIXED, QUOTE_ONLY)", v.PriceModel)
+	}
+
+	return nil
+}
 
 func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, hostId uuid.UUID, accessToken string) (*models.Venue, error) {
 	if err := models.Validate.Struct(venue); err != nil {
 		return nil, fmt.Errorf("invalid venue data provided: %v", err)
 	}
+
+	if err := ValidateAndNormalizeVenuePricing(venue); err != nil {
+		return nil, err
+	}
+
+	s := helpers.GenerateSlug(venue.Name, venue.Location)
+	venue.Slug = s
 	now := time.Now()
 	if venue.Id == uuid.Nil {
 		venue.Id = uuid.New()
-	}
-
-	if accessToken != "" {
-		ctx = context.WithValue(ctx, ctxKey("access_token"), accessToken)
 	}
 
 	// Upload images first if any
@@ -66,7 +115,7 @@ func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, h
 			fmt.Printf("Successfully uploaded %d images\n", len(result.urls))
 		case uploadErr := <-errorChan:
 			return nil, fmt.Errorf("failed to upload images: %v", uploadErr)
-		case <-time.After(10 * time.Second):
+		case <-time.After(30 * time.Second): // Increased timeout for multiple images
 			return nil, fmt.Errorf("image upload timeout")
 		}
 	}
@@ -81,7 +130,7 @@ func (vs *VenuesService) CreateVenue(ctx context.Context, venue *models.Venue, h
 	if err != nil {
 		// If venue creation fails, clean up uploaded images
 		if len(uploadedPublicIDs) > 0 {
-			helpers.DeleteImages(ctx, connect.Cld, uploadedPublicIDs)
+			helpers.DeleteImages(ctx, connect.Cld, helpers.VenueFolder, uploadedPublicIDs)
 		}
 		return nil, err
 	}
@@ -110,11 +159,6 @@ func (vs *VenuesService) ListVenueByID(ctx context.Context, id uuid.UUID) (*mode
 func (vs *VenuesService) DeleteVenue(ctx context.Context, host_id uuid.UUID, venue_id uuid.UUID, accessToken string) error {
 	if host_id == uuid.Nil || venue_id == uuid.Nil {
 		return fmt.Errorf("invalid host ID or venue ID")
-	}
-
-	// Store access token in context so repo can create an authenticated client
-	if accessToken != "" {
-		ctx = context.WithValue(ctx, ctxKey("access_token"), accessToken)
 	}
 
 	return vs.venuesRepo.DeleteVenue(ctx, host_id, venue_id, accessToken)

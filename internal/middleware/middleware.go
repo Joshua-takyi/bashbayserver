@@ -3,6 +3,7 @@ package middleware
 import (
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -143,8 +144,13 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 			}
 
 			// Refresh succeeded, set new cookies
-			isProduction := c.GetHeader("X-Forwarded-Proto") == "https" || c.Request.TLS != nil
+			isProduction := os.Getenv("GIN_MODE") == "production"
 			if tokenRes, ok := refreshResponse.(*types.TokenResponse); ok && tokenRes.AccessToken != "" {
+				logger.Info("Token refreshed successfully",
+					"user_id", tokenRes.User.ID,
+					"expires_in", tokenRes.ExpiresIn,
+				)
+				// Set new access token cookie
 				c.SetCookie(
 					"access_token",
 					tokenRes.AccessToken,
@@ -154,6 +160,7 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 					isProduction,
 					true,
 				)
+				// Set new refresh token cookie
 				c.SetCookie(
 					"refresh_token",
 					tokenRes.RefreshToken,
@@ -163,8 +170,10 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 					isProduction,
 					true,
 				)
+				// Update token variable with the new access token
+				token = tokenRes.AccessToken
 				// Validate the new token
-				claims, err = helpers.ValidateToken(tokenRes.AccessToken)
+				claims, err = helpers.ValidateToken(token)
 				if err != nil {
 					c.JSON(http.StatusUnauthorized, gin.H{
 						"message": "Unauthorized access",
@@ -184,7 +193,7 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 		}
 
 		// Fetch profile data from Supabase using the user service (which uses authenticated client)
-		var profileRole, username string
+		var profileRole, username, fullname, phoneNumber string
 		userID, parseErr := uuid.Parse(claims.Subject)
 		if parseErr != nil {
 			logger.Error("Invalid user ID in token", "user_id", claims.Subject, "error", parseErr)
@@ -207,6 +216,8 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 						"user_id", claims.Subject,
 					)
 				}
+				phoneNumber = user.PhoneNumber
+				fullname = user.FullName
 				username = user.Username
 			}
 		}
@@ -217,6 +228,9 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 			Role:         profileRole,
 			UserID:       claims.Subject,
 			Username:     username,
+			Email:        claims.Email,
+			Fullname:     fullname,
+			PhoneNumber:  phoneNumber,
 		}
 
 		// Store enhanced claims in context

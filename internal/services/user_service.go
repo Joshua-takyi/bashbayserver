@@ -97,3 +97,16 @@ func (us *UserService) DeleteUser(ctx context.Context, id uuid.UUID, accessToken
 	}
 	return nil
 }
+
+func (su *UserService) UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error) {
+	if userId == uuid.Nil {
+		return "", fmt.Errorf("no valid UUID provided")
+	}
+
+	avatarURL, err := su.userRepo.UploadAvatar(ctx, userId, imageData, accessToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to upload avatar: %v", err)
+	}
+
+	return avatarURL, nil
+}

@@ -91,6 +91,47 @@ func IsPasswordStrong(password string) bool {
 	return hasLower && hasUpper && hasNumber && hasSpecial
 }
 
+// func DeleteImages(ctx context.Context, cld *cloudinary.Cloudinary, publicIDs []string) error {
+// 	for _, publicID := range publicIDs {
+// 		if strings.TrimSpace(publicID) == "" {
+// 			continue
+// 		}
+// 		_, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
+// 			PublicID: publicID,
+// 		})
+// 		if err != nil {
+// 			fmt.Printf("Failed to delete image %s: %v\n", publicID, err)
+// 			// Continue deleting others
+// 		}
+// 	}
+// 	return nil
+// }
+
+func SuccessResponse(data interface{}, message string) models.ApiResponse {
+	return models.ApiResponse{
+		Success: true,
+		Data:    data,
+		Message: message,
+	}
+}
+
+func ErrorResponse(err string) models.ApiResponse {
+	return models.ApiResponse{
+		Success: false,
+		Error:   err,
+	}
+}
+
+func PaginatedResponse(data interface{}, page, limit, total int) models.ApiResponse {
+	return models.ApiResponse{
+		Success: true,
+		Data:    data,
+		Page:    page,
+		Limit:   limit,
+		Total:   total,
+	}
+}
+
 func UploadImages(ctx context.Context, cld *cloudinary.Cloudinary, imageNames []string, imagePath string) ([]string, []string, error) {
 	var urls []string
 	var publicIDs []string
@@ -119,43 +160,44 @@ func UploadImages(ctx context.Context, cld *cloudinary.Cloudinary, imageNames []
 	return urls, publicIDs, nil
 }
 
-func DeleteImages(ctx context.Context, cld *cloudinary.Cloudinary, publicIDs []string) error {
-	for _, publicID := range publicIDs {
-		if strings.TrimSpace(publicID) == "" {
+func DeleteImages(ctx context.Context, cld *cloudinary.Cloudinary, folderName string, publicIDs []string) error {
+	for _, rawID := range publicIDs {
+		publicID := strings.TrimSpace(rawID)
+		if publicID == "" {
 			continue
 		}
-		_, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
+
+		// Ensure folder prefix if provided
+		if folderName != "" && !strings.HasPrefix(publicID, folderName+"/") {
+			publicID = fmt.Sprintf("%s/%s", folderName, publicID)
+		}
+
+		// Attempt deletion
+		resp, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
 			PublicID: publicID,
 		})
 		if err != nil {
-			fmt.Printf("Failed to delete image %s: %v\n", publicID, err)
-			// Continue deleting others
+			fmt.Printf("[Cloudinary] Error deleting '%s': %v\n", publicID, err)
+			continue
+		}
+
+		switch resp.Result {
+		case "ok":
+			fmt.Printf("[Cloudinary] Deleted: %s\n", publicID)
+		case "not found":
+			fmt.Printf("[Cloudinary] Not found: %s\n", publicID)
+		default:
+			fmt.Printf("[Cloudinary] Unexpected result for '%s': %s\n", publicID, resp.Result)
 		}
 	}
+
 	return nil
 }
 
-func SuccessResponse(data interface{}, message string) models.ApiResponse {
-	return models.ApiResponse{
-		Success: true,
-		Data:    data,
-		Message: message,
-	}
-}
-
-func ErrorResponse(err string) models.ApiResponse {
-	return models.ApiResponse{
-		Success: false,
-		Error:   err,
-	}
-}
-
-func PaginatedResponse(data interface{}, page, limit, total int) models.ApiResponse {
-	return models.ApiResponse{
-		Success: true,
-		Data:    data,
-		Page:    page,
-		Limit:   limit,
-		Total:   total,
-	}
+func GenerateSlug(name, location string) string {
+	combined := fmt.Sprintf("%s %s", name, location)
+	slug := strings.ToLower(strings.TrimSpace(combined))
+	slug = regexp.MustCompile(`[\s\W-]+`).ReplaceAllString(slug, "-")
+	slug = strings.Trim(slug, "-")
+	return slug
 }
