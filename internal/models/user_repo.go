@@ -24,7 +24,9 @@ type UserRepo interface {
 	GetUser(ctx context.Context, id uuid.UUID, accessToken string) (*User, error)
 	UpdateUser(ctx context.Context, user map[string]interface{}, userid uuid.UUID, accessToken string) (*User, error)
 	DeleteUser(ctx context.Context, id uuid.UUID, accessToken string) error
-	UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error)
+	UploadAvatar(ctx context.Context, userId uuid.UUID, imageURL string, accessToken string) (string, error)
+	GetGoogleAuthURL(ctx context.Context, redirectTo string) (string, error)
+	ExchangeGoogleCode(ctx context.Context, code string) (*OAuthTokenResponse, error)
 }
 
 func ConvertToUser(raw map[string]interface{}) (*User, error) {
@@ -226,7 +228,7 @@ func (su *SupabaseRepo) RefreshToken(ctx context.Context, refreshToken string) (
 	return resp, nil
 }
 
-func (su *SupabaseRepo) UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error) {
+func (su *SupabaseRepo) UploadAvatar(ctx context.Context, userId uuid.UUID, imageURL string, accessToken string) (string, error) {
 	client := su.supabaseClient
 	if accessToken != "" {
 		authClient, err := su.GetAuthenticatedClient(accessToken)
@@ -237,7 +239,7 @@ func (su *SupabaseRepo) UploadAvatar(ctx context.Context, userId uuid.UUID, imag
 	}
 
 	raw, count, err := client.From(ProfileTable).Update(map[string]interface{}{
-		"avatar_url": imageData,
+		"avatar_url": imageURL,
 	}, "", "exact").Eq("id", userId.String()).Execute()
 	if err != nil {
 		return "", fmt.Errorf("failed to upload avatar: %v", err)
@@ -262,4 +264,41 @@ func (su *SupabaseRepo) UploadAvatar(ctx context.Context, userId uuid.UUID, imag
 	}
 
 	return updatedUser.AvatarURL, nil
+}
+
+// GetGoogleAuthURL generates the Google OAuth URL via Supabase Auth
+func (su *SupabaseRepo) GetGoogleAuthURL(ctx context.Context, redirectTo string) (string, error) {
+	// Supabase automatically handles Google OAuth
+	// The provider is "google" and redirectTo is where to send user after auth
+	provider := "google"
+
+	// Get the base URL from the repo
+	baseURL := su.url
+
+	// Construct the OAuth URL
+	// Format: https://<project-ref>.supabase.co/auth/v1/authorize?provider=google&redirect_to=<your-callback-url>
+	authURL := fmt.Sprintf("%s/auth/v1/authorize?provider=%s", baseURL, provider)
+
+	if redirectTo != "" {
+		authURL += "&redirect_to=" + redirectTo
+	}
+
+	return authURL, nil
+}
+
+// ExchangeGoogleCode exchanges the authorization code for tokens via Supabase
+func (su *SupabaseRepo) ExchangeGoogleCode(ctx context.Context, code string) (*OAuthTokenResponse, error) {
+	// Use Supabase's built-in token exchange
+	// This is handled automatically by Supabase when the user is redirected back
+	// We just need to verify the session with the code
+
+	// In Supabase, the OAuth flow automatically creates a session
+	// You typically get the access token from the URL fragment
+	// For server-side code exchange, you'd use the Auth API
+
+	// Since we're using Supabase's managed auth, the tokens are typically
+	// passed via URL fragments to the client, and the client sends them to us
+	// For now, return an error indicating this should be handled client-side
+
+	return nil, fmt.Errorf("OAuth code exchange should be handled by Supabase client-side flow")
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/google/uuid"
 	"github.com/joshua-takyi/ww/internal/helpers"
 	"github.com/joshua-takyi/ww/internal/models"
@@ -98,15 +99,49 @@ func (us *UserService) DeleteUser(ctx context.Context, id uuid.UUID, accessToken
 	return nil
 }
 
-func (su *UserService) UploadAvatar(ctx context.Context, userId uuid.UUID, imageData string, accessToken string) (string, error) {
+func (su *UserService) UploadAvatar(ctx context.Context, userId uuid.UUID, imagePath string, accessToken string, cld *cloudinary.Cloudinary) (string, error) {
 	if userId == uuid.Nil {
 		return "", fmt.Errorf("no valid UUID provided")
 	}
 
-	avatarURL, err := su.userRepo.UploadAvatar(ctx, userId, imageData, accessToken)
+	// Upload image to Cloudinary
+	imageURLs, _, err := helpers.UploadImages(ctx, cld, []string{imagePath}, helpers.AvatarFolder)
 	if err != nil {
-		return "", fmt.Errorf("failed to upload avatar: %v", err)
+		return "", fmt.Errorf("failed to upload image to cloudinary: %v", err)
+	}
+
+	if len(imageURLs) == 0 {
+		return "", fmt.Errorf("no image URL returned from cloudinary")
+	}
+
+	// Update database with the Cloudinary URL
+	avatarURL, err := su.userRepo.UploadAvatar(ctx, userId, imageURLs[0], accessToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to update avatar in database: %v", err)
 	}
 
 	return avatarURL, nil
+}
+
+// GetGoogleAuthURL generates the Google OAuth URL via Supabase
+func (us *UserService) GetGoogleAuthURL(redirectTo string) (string, error) {
+	authURL, err := us.userRepo.GetGoogleAuthURL(context.Background(), redirectTo)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate Google auth URL: %v", err)
+	}
+	return authURL, nil
+}
+
+// ExchangeGoogleCode exchanges the authorization code for tokens
+func (us *UserService) ExchangeGoogleCode(code string) (*models.OAuthTokenResponse, error) {
+	if code == "" {
+		return nil, fmt.Errorf("authorization code is required")
+	}
+
+	tokenResponse, err := us.userRepo.ExchangeGoogleCode(context.Background(), code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange authorization code: %v", err)
+	}
+
+	return tokenResponse, nil
 }

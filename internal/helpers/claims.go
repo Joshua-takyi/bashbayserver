@@ -7,7 +7,9 @@ type EnhancedClaims struct {
 	Email       string `json:"email,omitempty"`
 	Username    string `json:"username,omitempty"`
 	Fullname    string `json:"fullname,omitempty"`
+	AvatarURL   string `json:"avatar_url,omitempty"`
 	PhoneNumber string `json:"phone_number,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
 }
 
 // Helper methods for role checking

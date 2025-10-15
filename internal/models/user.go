@@ -22,3 +22,12 @@ type User struct {
 	CreatedAt   time.Time         `db:"created_at" json:"created_at"`
 	UpdatedAt   time.Time         `db:"updated_at" json:"updated_at"`
 }
+
+// OAuthTokenResponse represents the response from OAuth token exchange
+type OAuthTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int    `json:"expires_in"`
+	TokenType    string `json:"token_type"`
+	User         *User  `json:"user,omitempty"`
+}

@@ -13,16 +13,16 @@ import (
 )
 
 type VenuesService struct {
-	venuesRepo models.VenuesRepo
+	venuesRepo     models.VenuesRepo
+	venueViewsRepo models.VenueViewsRepo
 }
 
-func NewVenuesService(venuesRepo models.VenuesRepo) *VenuesService {
+func NewVenuesService(venuesRepo models.VenuesRepo, venueViewsRepo models.VenueViewsRepo) *VenuesService {
 	return &VenuesService{
-		venuesRepo: venuesRepo,
+		venuesRepo:     venuesRepo,
+		venueViewsRepo: venueViewsRepo,
 	}
 }
-
-// ...existing code...
 
 func ValidateAndNormalizeVenuePricing(v *models.Venue) error {
 	if v == nil {
@@ -185,4 +185,82 @@ func (vs *VenuesService) QueryVenues(ctx context.Context, query map[string]inter
 		return nil, 0, fmt.Errorf("query parameters cannot be empty")
 	}
 	return vs.venuesRepo.QueryVenues(ctx, query, offset, limit)
+}
+
+func (vs *VenuesService) GetVenueBySlug(ctx context.Context, slug string) (*models.Venue, error) {
+	if strings.TrimSpace(slug) == "" {
+		return nil, fmt.Errorf("invalid slug")
+	}
+
+	return vs.venuesRepo.GetVenueBySlug(ctx, slug)
+}
+
+func (vs *VenuesService) CreateManyVenues(ctx context.Context, venues []*models.Venue, hostId uuid.UUID, accessToken string) ([]*models.Venue, error) {
+	if len(venues) == 0 {
+		return nil, fmt.Errorf("no venues to create")
+	}
+
+	for _, v := range venues {
+		if err := models.Validate.Struct(v); err != nil {
+			return nil, fmt.Errorf("invalid venue data provided: %v", err)
+		}
+		if err := ValidateAndNormalizeVenuePricing(v); err != nil {
+			return nil, err
+		}
+		s := helpers.GenerateSlug(v.Name, v.Location)
+		v.Slug = s
+		if v.Id == uuid.Nil {
+			v.Id = uuid.New()
+		}
+		v.HostId = hostId
+		v.CreatedAt = time.Now()
+		v.UpdatedAt = time.Now()
+		v.Status = models.StatusPending
+	}
+
+	return vs.venuesRepo.CreateManyVenues(ctx, venues, hostId, accessToken)
+}
+
+func (vs *VenuesService) TrackVenueView(ctx context.Context, venueId uuid.UUID, userId *uuid.UUID, sessionId, ipAddress, userAgent string) error {
+	// First, get the venue to extract host_id
+	venue, err := vs.venuesRepo.ListVenueByID(ctx, venueId)
+	if err != nil {
+		return fmt.Errorf("failed to get venue for view tracking: %v", err)
+	}
+	if venue == nil {
+		return fmt.Errorf("venue not found for view tracking")
+	}
+
+	view := &models.VenueView{
+		VenueID:   venueId.String(),
+		HostID:    venue.HostId.String(), // Include host_id for efficient queries
+		SessionID: sessionId,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+	}
+
+	if userId != nil {
+		userIdStr := userId.String()
+		view.UserID = &userIdStr
+	}
+
+	return vs.venueViewsRepo.TrackVenueView(ctx, view)
+}
+
+func (vs *VenuesService) GetVenueViewStats(ctx context.Context, venueId uuid.UUID, days int) (*models.VenueViewStats, error) {
+	return vs.venueViewsRepo.GetVenueViewStats(ctx, venueId.String(), days)
+}
+
+func (vs *VenuesService) GetVenueViewHistory(ctx context.Context, venueId uuid.UUID, limit int) ([]*models.VenueView, error) {
+	return vs.venueViewsRepo.GetVenueViewHistory(ctx, venueId.String(), limit)
+}
+
+// GetHostViewStats returns aggregated view statistics for all venues owned by a host
+func (vs *VenuesService) GetHostViewStats(ctx context.Context, hostId uuid.UUID, days int) (*models.HostViewStats, error) {
+	return vs.venueViewsRepo.GetHostViewStats(ctx, hostId.String(), days)
+}
+
+// GetHostViewHistory returns recent view records for all venues owned by a host
+func (vs *VenuesService) GetHostViewHistory(ctx context.Context, hostId uuid.UUID, limit int) ([]*models.VenueView, error) {
+	return vs.venueViewsRepo.GetHostViewHistory(ctx, hostId.String(), limit)
 }

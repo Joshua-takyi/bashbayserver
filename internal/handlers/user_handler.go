@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/cloudinary/cloudinary-go/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/joshua-takyi/ww/internal/helpers"
@@ -150,7 +151,7 @@ func GetUser(u *services.UserService) gin.HandlerFunc {
 func UpdateUser(u *services.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		paramId := c.Param("id")
-		paramId = strings.TrimSpace(paramId)
+		paramId = helpers.StringTrim(paramId)
 		paramId = strings.Trim(paramId, " ")
 		if paramId == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -209,7 +210,7 @@ func UpdateUser(u *services.UserService) gin.HandlerFunc {
 
 func DeleteUser(u *services.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		paramId := strings.TrimSpace(c.Param("id"))
+		paramId := helpers.StringTrim(c.Param("id"))
 		if paramId == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "user ID is required",
@@ -253,20 +254,46 @@ func DeleteUser(u *services.UserService) gin.HandlerFunc {
 	}
 }
 
-func UploadAvatar(u *services.UserService) gin.HandlerFunc {
+func UploadAvatar(u *services.UserService, cld *cloudinary.Cloudinary) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		paramId := strings.TrimSpace(c.Param("id"))
+		paramId := helpers.StringTrim(c.Param("id"))
 		if paramId == "" {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error": "user ID is required",
 			})
 			return
 		}
-		var imageData string
-		if err := c.ShouldBindJSON(&imageData); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+
+		// Parse the image file from multipart form
+		file, header, err := c.Request.FormFile("avatar")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "avatar file is required"})
 			return
 		}
+		defer file.Close()
+
+		// Validate file type
+		contentType := header.Header.Get("Content-Type")
+		if !strings.HasPrefix(contentType, "image/") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "file must be an image"})
+			return
+		}
+
+		// Create a temporary file
+		tempFile, err := os.CreateTemp("", "avatar-*.tmp")
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process image"})
+			return
+		}
+		defer os.Remove(tempFile.Name())
+		defer tempFile.Close()
+
+		// Copy uploaded file to temp file
+		if _, err := tempFile.ReadFrom(file); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save image"})
+			return
+		}
+
 		claims, exists := c.Get("user")
 		if !exists {
 			c.JSON(401, gin.H{"error": "Unauthorized"})
@@ -287,7 +314,8 @@ func UploadAvatar(u *services.UserService) gin.HandlerFunc {
 			c.JSON(401, gin.H{"error": "Access token not found"})
 			return
 		}
-		avatarURL, err := u.UploadAvatar(c.Request.Context(), userId, imageData, accessToken)
+
+		avatarURL, err := u.UploadAvatar(c.Request.Context(), userId, tempFile.Name(), accessToken, cld)
 		if err != nil {
 			c.JSON(500, gin.H{"error": err.Error()})
 			return

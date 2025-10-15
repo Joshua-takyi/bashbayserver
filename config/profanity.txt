@@ -1,0 +1,69 @@
+Since you are running an event venue platform and need to moderate user reviews, the default generic profanity list should be expanded to include terms related to **illegal activities, hate speech, explicit content, and specific types of harassment** often seen in venue reviews.
+
+Here is an expanded list, keeping the terms case-insensitive and adding categories for better organization:
+
+```
+# Default profanity list (generic placeholders)
+# Add one term per line. Lines starting with # are comments.
+
+# --- GENERIC PROFANITY & VULGARITY ---
+abuse
+harassment
+insult
+slur
+swear
+vulgar
+obscene
+bitch
+fuck
+shit
+damn
+asshole
+pussy
+dick
+cunt
+motherfucker
+
+# --- HATE SPEECH & DISCRIMINATION (Essential for Public Reviews) ---
+racist
+bigot
+homophobic
+nazi
+terrorist
+genocide
+prejudice
+sexist
+transphobic
+xenophobic
+
+# --- ILLEGAL ACTIVITY & HARM (Crucial for Venue Liability) ---
+illegal
+drugs
+violence
+rape
+murder
+extortion
+weapon
+trafficking
+stolen
+molest
+threat
+
+# --- EXPLICIT/SEXUAL CONTENT (To maintain a professional tone) ---
+porn
+naked
+intercourse
+ejaculate
+masturbate
+orgasm
+pedophile
+whore
+hooker
+
+# --- VENUE-SPECIFIC HARASSMENT (Relating to staff or other guests) ---
+stalk
+creep
+pervert
+suck (used as insult)
+idiot
+```

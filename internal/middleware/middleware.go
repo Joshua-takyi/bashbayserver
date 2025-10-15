@@ -193,7 +193,8 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 		}
 
 		// Fetch profile data from Supabase using the user service (which uses authenticated client)
-		var profileRole, username, fullname, phoneNumber string
+		var profileRole, username, fullname, phoneNumber, avatarURL string
+		var createdAt time.Time
 		userID, parseErr := uuid.Parse(claims.Subject)
 		if parseErr != nil {
 			logger.Error("Invalid user ID in token", "user_id", claims.Subject, "error", parseErr)
@@ -219,6 +220,8 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 				phoneNumber = user.PhoneNumber
 				fullname = user.FullName
 				username = user.Username
+				avatarURL = user.AvatarURL
+				createdAt = user.CreatedAt
 			}
 		}
 
@@ -231,6 +234,8 @@ func AuthMiddleware(supabaseClient *supabase.Client, userService *services.UserS
 			Email:        claims.Email,
 			Fullname:     fullname,
 			PhoneNumber:  phoneNumber,
+			AvatarURL:    avatarURL,
+			CreatedAt:    createdAt.Format(time.RFC3339),
 		}
 
 		// Store enhanced claims in context

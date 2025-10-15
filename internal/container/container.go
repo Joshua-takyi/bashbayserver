@@ -15,14 +15,11 @@ type Container struct {
 	Logger     *slog.Logger
 	Cloudinary *cloudinary.Cloudinary
 	// Database clients
-	SupabaseClient *supabase.Client
-	MongoDBClient  *mongo.Client
-
-	// Services (start with what you have, expand later)
-	UserService *services.UserService
-	// EventService  *services.EventService   // Add these as you create them
-	VenueService *services.VenuesService // Add these as you create them
-	// ReviewService *services.ReviewService  // Add these as you create them
+	SupabaseClient    *supabase.Client
+	MongoDBClient     *mongo.Client
+	UserService       *services.UserService
+	VenueService      *services.VenuesService
+	FavouritesService *services.FavouriteService
 }
 
 // NewContainer creates a new dependency injection container
@@ -34,18 +31,19 @@ func NewContainer(
 	supaUrl, supaKey string,
 ) *Container {
 	// Initialize repositories
-	userRepo := models.SupabaseNewRepo(supabaseClient, supaUrl, supaKey)
-
-	// Initialize services with their respective repositories
-	userService := services.NewUserService(userRepo)
-	venueService := services.NewVenuesService(userRepo) // userRepo also implements VenuesRepo
+	supa := models.SupabaseNewRepo(supabaseClient, supaUrl, supaKey)
+	mongo := models.MongodbNewRepo(mongoDBClient)
+	userService := services.NewUserService(supa)
+	venueService := services.NewVenuesService(supa, mongo)
+	favouriteService := services.NewFavouriteService(mongo)
 
 	return &Container{
-		Logger:         logger,
-		Cloudinary:     cloudinary,
-		SupabaseClient: supabaseClient,
-		MongoDBClient:  mongoDBClient,
-		UserService:    userService,
-		VenueService:   venueService,
+		Logger:            logger,
+		Cloudinary:        cloudinary,
+		SupabaseClient:    supabaseClient,
+		MongoDBClient:     mongoDBClient,
+		UserService:       userService,
+		FavouritesService: favouriteService,
+		VenueService:      venueService,
 	}
 }
